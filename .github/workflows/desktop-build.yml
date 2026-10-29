@@ -1,4 +1,5 @@
 # Desktop packaging — only after merge to main (not on pull requests).
+# After all matrix builds succeed, soft-create a GitVersion tag and publish a GitHub Release.
 name: desktop-build
 
 on:
@@ -79,7 +80,10 @@ jobs:
             libappindicator3-dev \
             librsvg2-dev \
             patchelf \
-            xdg-utils
+            xdg-utils \
+            fakeroot \
+            file \
+            libfuse2
 
       - name: Install frontend dependencies
         run: npm ci
@@ -92,3 +96,84 @@ jobs:
           args: ${{ matrix.args }}
           uploadWorkflowArtifacts: true
           workflowArtifactNamePattern: octavo-[platform]-[arch]-v${{ steps.gitversion.outputs.semVer }}
+
+  # Tag + GitHub Release — contents: write only here (least privilege elsewhere).
+  release:
+    name: github-release
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup GitVersion
+        uses: gittools/actions/gitversion/setup@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
+        with:
+          versionSpec: "6.4.x"
+
+      - name: Determine version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
+        with:
+          configFilePath: GitVersion.yml
+
+      - name: Download desktop artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: octavo-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Soft-create tag and publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITVERSION_SEMVER: ${{ steps.gitversion.outputs.semVer }}
+        run: |
+          set -euo pipefail
+          TAG="v${GITVERSION_SEMVER}"
+          echo "Release tag: ${TAG}"
+
+          # Soft-create: create the GitVersion tag only if it does not already exist (no force-move).
+          if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists — skipping create"
+          else
+            git tag "${TAG}" "${GITHUB_SHA}"
+            git push origin "refs/tags/${TAG}"
+            echo "Created and pushed tag ${TAG}"
+          fi
+
+          mapfile -t ASSETS < <(
+            find release-assets -type f \( \
+              -name '*.AppImage' -o \
+              -name '*.deb' -o \
+              -name '*.rpm' -o \
+              -name '*.msi' -o \
+              -name '*-setup.exe' \
+            ) | sort
+          )
+
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "No installer artifacts found under release-assets/" >&2
+            find release-assets -type f | sort >&2 || true
+            exit 1
+          fi
+
+          echo "Uploading ${#ASSETS[@]} asset(s):"
+          printf '  %s\n' "${ASSETS[@]}"
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${ASSETS[@]}" --clobber
+            echo "Updated existing release ${TAG}"
+          else
+            gh release create "${TAG}" "${ASSETS[@]}" \
+              --title "Octavo ${TAG}" \
+              --generate-notes \
+              --target "${GITHUB_SHA}"
+            echo "Created release ${TAG}"
+          fi
