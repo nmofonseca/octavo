@@ -1,5 +1,6 @@
 import { useMemo, useRef } from "react";
 import type { LibraryDoc } from "../types";
+import { APP_VERSION } from "../version";
 
 type Props = {
   docs: LibraryDoc[];
@@ -47,6 +48,9 @@ export function Library({ docs, onOpen, onOpenFile, onOpenSample, onRemove }: Pr
         <h1 className="brand">Octavo</h1>
         <p className="hero-line">
           A personal desktop reader — search, mark up, and keep your library close.
+        </p>
+        <p className="app-version" aria-label={`Version ${APP_VERSION}`}>
+          v{APP_VERSION}
         </p>
         <div className="hero-actions">
           <button type="button" className="btn btn-primary" onClick={onOpenSample}>

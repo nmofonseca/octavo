@@ -48,6 +48,24 @@ npm run tauri:build
 
 Artifacts land under `src-tauri/target/release/bundle/`. Prefer native CI runners per OS/arch. Icons live in `src-tauri/icons/`.
 
+## CI / versioning
+
+| Workflow | Trigger | Required check |
+| --- | --- | --- |
+| `test` (job `test`) | PRs + pushes to `main` | **`test`** — keep this name for the Protect main ruleset |
+| `desktop-build` | Push to `main` only | Optional: `build (ubuntu-22.04)`, `build (ubuntu-24.04-arm)`, `build (windows-latest)`, `build (windows-11-arm)` |
+
+Local quality gates:
+
+```bash
+npm run lint
+npm run typecheck
+npm test
+npm run build
+```
+
+Semver comes from [GitVersion](https://gitversion.net/) (`GitVersion.yml`). CI stamps `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` via `npm run version:apply -- <semver> [majorMinorPatch]`. The library UI shows `v{version}` from `package.json`. Prefer annotated `vX.Y.Z` tags over long-lived `next-version` once releases start.
+
 ## Annotation storage
 
 Annotation JSON lives in the webview’s `localStorage`, keyed by document id. Packaged builds inherit the OS WebView storage for the app origin.
