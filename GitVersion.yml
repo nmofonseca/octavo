@@ -1,0 +1,5 @@
+# Semantic versioning for Octavo. Trunk is `main` (master is deleted — do not use).
+workflow: GitHubFlow/v1
+mode: ContinuousDelivery
+tag-prefix: v
+next-version: 0.2.0

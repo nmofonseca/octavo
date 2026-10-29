@@ -48,6 +48,20 @@ npm run tauri:build
 
 Artifacts land under `src-tauri/target/release/bundle/`. Prefer native CI runners per OS/arch. Icons live in `src-tauri/icons/`.
 
+## CI
+
+- **PR / push:** lint, TypeScript typecheck, Vitest, Rust fmt/clippy/test — [`.github/workflows/ci.yml`](.github/workflows/ci.yml)
+- **Merge to `main` only:** GitVersion + Tauri package matrix (Linux/Windows × amd64/arm64) — [`.github/workflows/build.yml`](.github/workflows/build.yml)
+- Matrix gaps, hardening, and version stamping: [`.github/CI.md`](.github/CI.md)
+
+Local checks:
+
+```bash
+npm run lint
+npm run typecheck
+npm run test
+```
+
 ## Annotation storage
 
 Annotation JSON lives in the webview’s `localStorage`, keyed by document id. Packaged builds inherit the OS WebView storage for the app origin.
