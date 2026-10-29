@@ -134,6 +134,15 @@ button {
   animation: floaty 4.5s ease-in-out infinite;
 }
 
+.app-version {
+  margin: 0.55rem 0 0;
+  font-family: var(--font-ui);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ash-dim);
+}
+
 .hero-line {
   margin: 1.35rem 0 0;
   font-size: clamp(1.05rem, 2.2vw, 1.35rem);

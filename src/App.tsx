@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useState } from "react";
 import { Library } from "./components/Library";
 import { Reader } from "./components/Reader";
 import { docIdFromMeta, loadLibrary, saveLibrary, touchOpened } from "./lib/storage";
@@ -14,23 +14,22 @@ const SAMPLE: LibraryDoc = {
   pageCount: 3,
 };
 
-export default function App() {
-  const [docs, setDocs] = useState<LibraryDoc[]>([]);
-  const [active, setActive] = useState<LibraryDoc | null>(null);
+function loadInitialDocs(): LibraryDoc[] {
+  const stored = loadLibrary().filter((d) => d.source === "sample" || d.url);
+  if (stored.length === 0) {
+    const seed = [SAMPLE];
+    saveLibrary(seed);
+    return seed;
+  }
+  const hasSample = stored.some((d) => d.id === SAMPLE.id);
+  const next = hasSample ? stored : [SAMPLE, ...stored];
+  if (!hasSample) saveLibrary(next);
+  return next;
+}
 
-  useEffect(() => {
-    const stored = loadLibrary().filter((d) => d.source === "sample" || d.url);
-    if (stored.length === 0) {
-      const seed = [SAMPLE];
-      saveLibrary(seed);
-      setDocs(seed);
-    } else {
-      const hasSample = stored.some((d) => d.id === SAMPLE.id);
-      const next = hasSample ? stored : [SAMPLE, ...stored];
-      if (!hasSample) saveLibrary(next);
-      setDocs(next);
-    }
-  }, []);
+export default function App() {
+  const [docs, setDocs] = useState<LibraryDoc[]>(loadInitialDocs);
+  const [active, setActive] = useState<LibraryDoc | null>(null);
 
   const openDoc = useCallback((doc: LibraryDoc) => {
     if (doc.source === "file" && !doc.url) return;

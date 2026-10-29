@@ -1,0 +1,179 @@
+# Desktop packaging — only after merge to main (not on pull requests).
+# After all matrix builds succeed, soft-create a GitVersion tag and publish a GitHub Release.
+name: desktop-build
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: desktop-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: build (${{ matrix.platform }})
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: ubuntu-22.04
+            args: ""
+          - platform: ubuntu-24.04-arm
+            args: ""
+          - platform: windows-latest
+            args: ""
+          - platform: windows-11-arm
+            args: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup GitVersion
+        uses: gittools/actions/gitversion/setup@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
+        with:
+          versionSpec: "6.4.x"
+
+      - name: Determine version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
+        with:
+          configFilePath: GitVersion.yml
+
+      - name: Apply semver to package/app
+        shell: bash
+        env:
+          GITVERSION_SEMVER: ${{ steps.gitversion.outputs.semVer }}
+          GITVERSION_MAJORMINORPATCH: ${{ steps.gitversion.outputs.majorMinorPatch }}
+        run: node scripts/apply-version.mjs
+
+      - name: Setup Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@683b588c487a69d01f6c6ddf40f036ff682cc2c8 # stable
+        with:
+          toolchain: stable
+
+      - name: Cache Rust
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri -> target
+          shared-key: ${{ matrix.platform }}
+
+      - name: Install Linux WebKit / bundler deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            xdg-utils \
+            fakeroot \
+            file \
+            libfuse2
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Build Tauri app
+        uses: tauri-apps/tauri-action@1deb371b0cd8bd54025b384f1cd735e725c4060f # action-v1.0.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: ${{ matrix.args }}
+          uploadWorkflowArtifacts: true
+          workflowArtifactNamePattern: octavo-[platform]-[arch]-v${{ steps.gitversion.outputs.semVer }}
+
+  # Tag + GitHub Release — contents: write only here (least privilege elsewhere).
+  release:
+    name: github-release
+    needs: build
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Setup GitVersion
+        uses: gittools/actions/gitversion/setup@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
+        with:
+          versionSpec: "6.4.x"
+
+      - name: Determine version
+        id: gitversion
+        uses: gittools/actions/gitversion/execute@7417b1089e2c7de93510f1901d656ddf60bb024f # v4.7.0
+        with:
+          configFilePath: GitVersion.yml
+
+      - name: Download desktop artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          pattern: octavo-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: Soft-create tag and publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITVERSION_SEMVER: ${{ steps.gitversion.outputs.semVer }}
+        run: |
+          set -euo pipefail
+          TAG="v${GITVERSION_SEMVER}"
+          echo "Release tag: ${TAG}"
+
+          # Soft-create: create the GitVersion tag only if it does not already exist (no force-move).
+          if git rev-parse "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "Tag ${TAG} already exists — skipping create"
+          else
+            git tag "${TAG}" "${GITHUB_SHA}"
+            git push origin "refs/tags/${TAG}"
+            echo "Created and pushed tag ${TAG}"
+          fi
+
+          mapfile -t ASSETS < <(
+            find release-assets -type f \( \
+              -name '*.AppImage' -o \
+              -name '*.deb' -o \
+              -name '*.rpm' -o \
+              -name '*.msi' -o \
+              -name '*-setup.exe' \
+            ) | sort
+          )
+
+          if [ "${#ASSETS[@]}" -eq 0 ]; then
+            echo "No installer artifacts found under release-assets/" >&2
+            find release-assets -type f | sort >&2 || true
+            exit 1
+          fi
+
+          echo "Uploading ${#ASSETS[@]} asset(s):"
+          printf '  %s\n' "${ASSETS[@]}"
+
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${ASSETS[@]}" --clobber
+            echo "Updated existing release ${TAG}"
+          else
+            gh release create "${TAG}" "${ASSETS[@]}" \
+              --title "Octavo ${TAG}" \
+              --generate-notes \
+              --target "${GITHUB_SHA}"
+            echo "Created release ${TAG}"
+          fi

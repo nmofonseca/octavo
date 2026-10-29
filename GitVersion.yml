@@ -1,0 +1,22 @@
+# Trunk-based semver for main. Prefer git tags over next-version long-term.
+# GitVersion 6.x: avoid literal tag-prefix `v` with next-version 0.x
+# ("Failed to parse 0.2.0"); use optional [vV]? + Loose instead.
+workflow: TrunkBased/preview1
+next-version: 0.2.0
+semantic-version-format: Loose
+tag-prefix: '[vV]?'
+strategies:
+  - ConfiguredNextVersion
+  - Mainline
+branches:
+  main:
+    regex: ^main$
+    mode: ContinuousDeployment
+    label: ""
+    increment: Patch
+    is-main-branch: true
+  pull-request:
+    mode: ContinuousDelivery
+    label: PullRequest{Number}
+    increment: Inherit
+    regex: ^(pull|pull\-requests|pr)[/-]
