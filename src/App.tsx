@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { Library } from "./components/Library";
 import { Reader } from "./components/Reader";
-import { docIdFromMeta, loadLibrary, saveLibrary } from "./lib/storage";
+import { docIdFromMeta, loadLibrary, saveLibrary, touchOpened } from "./lib/storage";
 import type { LibraryDoc } from "./types";
 import "./styles.css";
 
@@ -19,13 +19,12 @@ export default function App() {
   const [active, setActive] = useState<LibraryDoc | null>(null);
 
   useEffect(() => {
-    const stored = loadLibrary();
+    const stored = loadLibrary().filter((d) => d.source === "sample" || d.url);
     if (stored.length === 0) {
       const seed = [SAMPLE];
       saveLibrary(seed);
       setDocs(seed);
     } else {
-      // Ensure sample stays available
       const hasSample = stored.some((d) => d.id === SAMPLE.id);
       const next = hasSample ? stored : [SAMPLE, ...stored];
       if (!hasSample) saveLibrary(next);
@@ -34,14 +33,20 @@ export default function App() {
   }, []);
 
   const openDoc = useCallback((doc: LibraryDoc) => {
+    if (doc.source === "file" && !doc.url) return;
+    setDocs((prev) => {
+      const next = touchOpened(prev, doc.id);
+      saveLibrary(next);
+      return next;
+    });
     setActive(doc);
   }, []);
 
   const openSample = useCallback(() => {
     setDocs((prev) => {
       const exists = prev.find((d) => d.id === SAMPLE.id);
-      if (exists) return prev;
-      const next = [SAMPLE, ...prev];
+      let next = exists ? prev : [SAMPLE, ...prev];
+      next = touchOpened(next, SAMPLE.id);
       saveLibrary(next);
       return next;
     });
@@ -56,18 +61,25 @@ export default function App() {
       source: "file",
       url,
       addedAt: Date.now(),
+      lastOpenedAt: Date.now(),
     };
     setDocs((prev) => {
-      const next = [doc, ...prev.filter((d) => d.id !== doc.id)];
-      saveLibrary(
-        next.map((d) =>
-          // Don't persist blob URLs across reloads — only metadata for files is session-local
-          d.source === "file" ? { ...d, url: d.id === doc.id ? url : d.url } : d,
-        ),
+      const next = touchOpened(
+        [doc, ...prev.filter((d) => d.id !== doc.id)],
+        doc.id,
       );
+      saveLibrary(next);
       return next;
     });
     setActive(doc);
+  }, []);
+
+  const removeDoc = useCallback((id: string) => {
+    setDocs((prev) => {
+      const next = prev.filter((d) => d.id !== id);
+      saveLibrary(next);
+      return next;
+    });
   }, []);
 
   const onMeta = useCallback(
@@ -95,6 +107,7 @@ export default function App() {
           onOpen={openDoc}
           onOpenFile={openFile}
           onOpenSample={openSample}
+          onRemove={removeDoc}
         />
       )}
     </div>

@@ -18,7 +18,13 @@ export function loadLibrary(): LibraryDoc[] {
 }
 
 export function saveLibrary(docs: LibraryDoc[]) {
-  localStorage.setItem(LIBRARY_KEY, JSON.stringify(docs));
+  // Persist sample docs fully; file blob URLs are session-only so strip dead ones on reload
+  const persistable = docs.map((d) =>
+    d.source === "file" && d.url.startsWith("blob:")
+      ? { ...d, url: "" }
+      : d,
+  );
+  localStorage.setItem(LIBRARY_KEY, JSON.stringify(persistable));
 }
 
 export function loadDocStore(docId: string): DocStore {
@@ -26,6 +32,8 @@ export function loadDocStore(docId: string): DocStore {
     annotations: [],
     lastPage: 1,
     zoom: 1.1,
+    rotation: 0,
+    viewMode: "continuous",
   });
 }
 
@@ -36,16 +44,25 @@ export function saveDocStore(docId: string, store: DocStore) {
 export function upsertAnnotations(
   docId: string,
   annotations: Annotation[],
-  extras?: Partial<Pick<DocStore, "lastPage" | "zoom">>,
+  extras?: Partial<Omit<DocStore, "annotations">>,
 ) {
   const prev = loadDocStore(docId);
   saveDocStore(docId, {
     annotations,
     lastPage: extras?.lastPage ?? prev.lastPage,
     zoom: extras?.zoom ?? prev.zoom,
+    rotation: extras?.rotation ?? prev.rotation ?? 0,
+    viewMode: extras?.viewMode ?? prev.viewMode ?? "continuous",
   });
 }
 
 export function docIdFromMeta(title: string, bytes?: number) {
   return `${title}::${bytes ?? 0}`;
+}
+
+export function touchOpened(docs: LibraryDoc[], id: string): LibraryDoc[] {
+  const now = Date.now();
+  return docs
+    .map((d) => (d.id === id ? { ...d, lastOpenedAt: now } : d))
+    .sort((a, b) => (b.lastOpenedAt ?? b.addedAt) - (a.lastOpenedAt ?? a.addedAt));
 }

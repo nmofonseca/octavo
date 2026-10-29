@@ -1,6 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <rect width="64" height="64" rx="14" fill="#0B1F24"/>
-  <!-- folded leaf / octavo mark -->
-  <path d="M18 16h18c7.2 0 12 4.4 12 11.2 0 5.2-2.6 9-7.2 10.6L48 48H37.2L31 37.2h-5.4V48H18V16zm7.6 14.6h5c3.4 0 5.4-1.7 5.4-4.4s-2-4.2-5.4-4.2h-5v8.6z" fill="#E8C37A"/>
-  <path d="M40 16l8 8v2.5L42.5 21H40V16z" fill="#A8C5C0"/>
+  <rect width="64" height="64" rx="14" fill="#0A0A0B"/>
+  <path d="M18 16h18c7.2 0 12 4.4 12 11.2 0 5.2-2.6 9-7.2 10.6L48 48H37.2L31 37.2h-5.4V48H18V16zm7.6 14.6h5c3.4 0 5.4-1.7 5.4-4.4s-2-4.2-5.4-4.2h-5v8.6z" fill="#FF7A1A"/>
+  <path d="M40 16l8 8v2.5L42.5 21H40V16z" fill="#FFB070"/>
 </svg>

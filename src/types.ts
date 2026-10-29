@@ -42,12 +42,35 @@ export type LibraryDoc = {
   /** Object URL or public path */
   url: string;
   addedAt: number;
+  lastOpenedAt?: number;
   pageCount?: number;
   lastPage?: number;
 };
+
+export type ViewMode = "single" | "continuous";
+export type FitMode = "custom" | "width" | "page";
+export type Rotation = 0 | 90 | 180 | 270;
 
 export type DocStore = {
   annotations: Annotation[];
   lastPage: number;
   zoom: number;
+  rotation?: Rotation;
+  viewMode?: ViewMode;
+};
+
+export type OutlineItem = {
+  title: string;
+  page: number | null;
+  items: OutlineItem[];
+};
+
+export type SearchHit = {
+  page: number;
+  /** Normalized page rect */
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  preview: string;
 };

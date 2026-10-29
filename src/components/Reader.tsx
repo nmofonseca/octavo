@@ -4,20 +4,27 @@ import {
   useMemo,
   useRef,
   useState,
-  type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
-import { openPdf } from "../lib/pdf";
+import {
+  getOutlineTree,
+  openPdf,
+  renderThumbnail,
+  searchDocument,
+} from "../lib/pdf";
 import { loadDocStore, upsertAnnotations } from "../lib/storage";
 import type {
   Annotation,
-  HighlightAnno,
-  InkAnno,
+  FitMode,
   LibraryDoc,
-  NoteAnno,
-  Point,
+  OutlineItem,
+  Rotation,
+  SearchHit,
   Tool,
+  ViewMode,
 } from "../types";
+import { PageView } from "./PageView";
+import { ReaderSidebar } from "./ReaderSidebar";
 
 type Props = {
   doc: LibraryDoc;
@@ -25,62 +32,67 @@ type Props = {
   onMeta: (pageCount: number, lastPage: number) => void;
 };
 
-const HIGHLIGHT_COLOR = "rgba(232, 195, 122, 0.45)";
-const INK_COLOR = "#2a6f7a";
-
-function uid() {
-  return crypto.randomUUID();
-}
+const ZOOM_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
 export function Reader({ doc, onBack, onMeta }: Props) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(1);
   const [pageCount, setPageCount] = useState(0);
   const [zoom, setZoom] = useState(1.15);
+  const [fit, setFit] = useState<FitMode>("custom");
+  const [rotation, setRotation] = useState<Rotation>(0);
+  const [viewMode, setViewMode] = useState<ViewMode>("continuous");
   const [tool, setTool] = useState<Tool>("pan");
   const [annotations, setAnnotations] = useState<Annotation[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const inkRef = useRef<HTMLCanvasElement>(null);
-  const stageRef = useRef<HTMLDivElement>(null);
-  const pageSizeRef = useRef({ w: 0, h: 0 });
-  const drawingRef = useRef<Point[] | null>(null);
-  const dragRef = useRef<{
-    mode: "highlight" | "pan";
-    startX: number;
-    startY: number;
-    originScrollX: number;
-    originScrollY: number;
-  } | null>(null);
-  const [draftRect, setDraftRect] = useState<{
-    x: number;
-    y: number;
-    w: number;
-    h: number;
-  } | null>(null);
-  const [draggingPan, setDraggingPan] = useState(false);
+  const [panel, setPanel] = useState<"thumbs" | "outline" | null>("thumbs");
+  const [outline, setOutline] = useState<OutlineItem[]>([]);
+  const [thumbs, setThumbs] = useState<{ page: number; src: string }[]>([]);
 
-  // Load doc + annotations
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchHits, setSearchHits] = useState<SearchHit[]>([]);
+  const [hitIndex, setHitIndex] = useState(0);
+  const [searching, setSearching] = useState(false);
+
+  const stageRef = useRef<HTMLDivElement>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
+  const searchAbortRef = useRef<AbortController | null>(null);
+
+  const showToast = useCallback((msg: string) => {
+    setToast(msg);
+    window.setTimeout(() => setToast(null), 1800);
+  }, []);
+
+  // Load doc
   useEffect(() => {
     let cancelled = false;
     (async () => {
       setLoading(true);
       setError(null);
+      setThumbs([]);
+      setOutline([]);
+      setSearchHits([]);
+      setSearchQuery("");
       try {
         const store = loadDocStore(doc.id);
         if (!cancelled) {
           setAnnotations(store.annotations);
           setPage(store.lastPage || 1);
           setZoom(store.zoom || 1.15);
+          setRotation((store.rotation as Rotation) || 0);
+          setViewMode(store.viewMode || "continuous");
         }
         const proxy = await openPdf(doc.url);
         if (cancelled) return;
         setPdf(proxy);
         setPageCount(proxy.numPages);
         onMeta(proxy.numPages, store.lastPage || 1);
+        const tree = await getOutlineTree(proxy);
+        if (!cancelled) setOutline(tree);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : "Failed to open PDF");
       } finally {
@@ -92,200 +104,246 @@ export function Reader({ doc, onBack, onMeta }: Props) {
     };
   }, [doc.id, doc.url, onMeta]);
 
-  // Persist annotations
+  // Persist
   useEffect(() => {
     if (!pdf) return;
-    upsertAnnotations(doc.id, annotations, { lastPage: page, zoom });
-  }, [annotations, doc.id, page, zoom, pdf]);
+    upsertAnnotations(doc.id, annotations, {
+      lastPage: page,
+      zoom,
+      rotation,
+      viewMode,
+    });
+  }, [annotations, doc.id, page, zoom, rotation, viewMode, pdf]);
 
-  const pageAnnos = useMemo(
-    () => annotations.filter((a) => a.page === page),
-    [annotations, page],
-  );
-
-  // Render PDF page
+  // Thumbnails
   useEffect(() => {
-    if (!pdf || !canvasRef.current) return;
+    if (!pdf || pageCount < 1) return;
     let cancelled = false;
     (async () => {
-      const pg = await pdf.getPage(page);
-      if (cancelled || !canvasRef.current) return;
-      const viewport = pg.getViewport({ scale: zoom });
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = Math.floor(viewport.width * dpr);
-      canvas.height = Math.floor(viewport.height * dpr);
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
-      pageSizeRef.current = { w: viewport.width, h: viewport.height };
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      await pg.render({ canvas, canvasContext: ctx, viewport }).promise;
-      // Resize ink canvas
-      if (inkRef.current) {
-        inkRef.current.width = canvas.width;
-        inkRef.current.height = canvas.height;
-        inkRef.current.style.width = canvas.style.width;
-        inkRef.current.style.height = canvas.style.height;
-        redrawInk(inkRef.current, pageAnnos, viewport.width, viewport.height, dpr);
+      const next: { page: number; src: string }[] = [];
+      for (let p = 1; p <= pageCount; p++) {
+        if (cancelled) return;
+        try {
+          const src = await renderThumbnail(pdf, p, 128, rotation);
+          if (!cancelled) next.push({ page: p, src });
+          if (!cancelled && (p % 2 === 0 || p === pageCount)) {
+            setThumbs([...next]);
+          }
+        } catch {
+          /* skip broken page */
+        }
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [pdf, page, zoom, pageAnnos]);
+  }, [pdf, pageCount, rotation]);
 
-  const showToast = useCallback((msg: string) => {
-    setToast(msg);
-    window.setTimeout(() => setToast(null), 1800);
-  }, []);
-
-  const toNorm = (clientX: number, clientY: number) => {
-    const canvas = canvasRef.current!;
-    const rect = canvas.getBoundingClientRect();
-    return {
-      x: (clientX - rect.left) / rect.width,
-      y: (clientY - rect.top) / rect.height,
-    };
-  };
-
-  const onPointerDown = (e: ReactPointerEvent) => {
-    if (!canvasRef.current) return;
-    (e.target as HTMLElement).setPointerCapture?.(e.pointerId);
-
-    if (tool === "note") {
-      const p = toNorm(e.clientX, e.clientY);
-      const note: NoteAnno = {
-        id: uid(),
-        type: "note",
-        page,
-        x: p.x,
-        y: p.y,
-        text: "",
-        color: "#ffe08a",
-      };
-      setAnnotations((prev) => [...prev, note]);
-      setTool("pan");
-      showToast("Sticky note added");
-      return;
-    }
-
-    if (tool === "ink") {
-      const p = toNorm(e.clientX, e.clientY);
-      drawingRef.current = [p];
-      return;
-    }
-
-    if (tool === "highlight") {
-      const p = toNorm(e.clientX, e.clientY);
-      dragRef.current = {
-        mode: "highlight",
-        startX: p.x,
-        startY: p.y,
-        originScrollX: 0,
-        originScrollY: 0,
-      };
-      setDraftRect({ x: p.x, y: p.y, w: 0, h: 0 });
-      return;
-    }
-
-    // pan
-    dragRef.current = {
-      mode: "pan",
-      startX: e.clientX,
-      startY: e.clientY,
-      originScrollX: stageRef.current?.scrollLeft ?? 0,
-      originScrollY: stageRef.current?.scrollTop ?? 0,
-    };
-    setDraggingPan(true);
-  };
-
-  const onPointerMove = (e: ReactPointerEvent) => {
-    if (tool === "ink" && drawingRef.current) {
-      const p = toNorm(e.clientX, e.clientY);
-      drawingRef.current.push(p);
-      const ink = inkRef.current;
-      if (ink) {
-        const dpr = window.devicePixelRatio || 1;
-        const ctx = ink.getContext("2d");
-        if (ctx) {
-          const pts = drawingRef.current;
-          const a = pts[pts.length - 2];
-          const b = pts[pts.length - 1];
-          ctx.save();
-          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-          ctx.strokeStyle = INK_COLOR;
-          ctx.lineWidth = 2.4;
-          ctx.lineCap = "round";
-          ctx.lineJoin = "round";
-          ctx.beginPath();
-          ctx.moveTo(a.x * pageSizeRef.current.w, a.y * pageSizeRef.current.h);
-          ctx.lineTo(b.x * pageSizeRef.current.w, b.y * pageSizeRef.current.h);
-          ctx.stroke();
-          ctx.restore();
-        }
+  const applyFit = useCallback(
+    async (mode: FitMode) => {
+      if (!pdf || !stageRef.current) return;
+      if (mode === "custom") {
+        setFit("custom");
+        return;
       }
-      return;
-    }
+      const pg = await pdf.getPage(page);
+      const base = pg.getViewport({ scale: 1, rotation });
+      const stage = stageRef.current;
+      const pad = 48;
+      const availW = Math.max(120, stage.clientWidth - pad);
+      const availH = Math.max(120, stage.clientHeight - pad);
+      let next =
+        mode === "width"
+          ? availW / base.width
+          : Math.min(availW / base.width, availH / base.height);
+      next = Math.min(3, Math.max(0.4, +next.toFixed(3)));
+      setZoom(next);
+      setFit(mode);
+    },
+    [pdf, page, rotation],
+  );
 
-    const drag = dragRef.current;
-    if (!drag) return;
+  // Re-fit on resize when fit mode active
+  useEffect(() => {
+    if (fit === "custom") return;
+    const onResize = () => {
+      void applyFit(fit);
+    };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [fit, applyFit]);
 
-    if (drag.mode === "highlight") {
-      const p = toNorm(e.clientX, e.clientY);
-      const x = Math.min(drag.startX, p.x);
-      const y = Math.min(drag.startY, p.y);
-      setDraftRect({
-        x,
-        y,
-        w: Math.abs(p.x - drag.startX),
-        h: Math.abs(p.y - drag.startY),
-      });
-      return;
-    }
+  const goToPage = useCallback(
+    (p: number) => {
+      const next = Math.min(pageCount, Math.max(1, p));
+      setPage(next);
+      if (viewMode === "continuous") {
+        requestAnimationFrame(() => {
+          document
+            .getElementById(`octavo-page-${next}`)
+            ?.scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+      } else if (stageRef.current) {
+        stageRef.current.scrollTop = 0;
+      }
+    },
+    [pageCount, viewMode],
+  );
 
-    if (drag.mode === "pan" && stageRef.current) {
-      stageRef.current.scrollLeft = drag.originScrollX - (e.clientX - drag.startX);
-      stageRef.current.scrollTop = drag.originScrollY - (e.clientY - drag.startY);
-    }
+  const runSearch = useCallback(
+    async (q: string) => {
+      if (!pdf) return;
+      searchAbortRef.current?.abort();
+      const ac = new AbortController();
+      searchAbortRef.current = ac;
+      const trimmed = q.trim();
+      if (!trimmed) {
+        setSearchHits([]);
+        setHitIndex(0);
+        setSearching(false);
+        return;
+      }
+      setSearching(true);
+      try {
+        const hits = await searchDocument(pdf, trimmed, ac.signal);
+        if (ac.signal.aborted) return;
+        setSearchHits(hits);
+        setHitIndex(0);
+        if (hits[0]) goToPage(hits[0].page);
+      } catch (e) {
+        if ((e as Error).name !== "AbortError") setSearchHits([]);
+      } finally {
+        if (!ac.signal.aborted) setSearching(false);
+      }
+    },
+    [pdf, goToPage],
+  );
+
+  // Debounced search
+  useEffect(() => {
+    if (!searchOpen) return;
+    const t = window.setTimeout(() => void runSearch(searchQuery), 220);
+    return () => window.clearTimeout(t);
+  }, [searchQuery, searchOpen, runSearch]);
+
+  const jumpHit = useCallback(
+    (dir: 1 | -1) => {
+      if (searchHits.length === 0) return;
+      const next = (hitIndex + dir + searchHits.length) % searchHits.length;
+      setHitIndex(next);
+      goToPage(searchHits[next].page);
+    },
+    [searchHits, hitIndex, goToPage],
+  );
+
+  const rotate = (dir: 1 | -1) => {
+    setRotation((r) => ((((r + dir * 90) % 360) + 360) % 360) as Rotation);
+    setFit((f) => (f === "custom" ? f : f));
   };
 
-  const onPointerUp = () => {
-    if (tool === "ink" && drawingRef.current && drawingRef.current.length > 1) {
-      const ink: InkAnno = {
-        id: uid(),
-        type: "ink",
-        page,
-        points: drawingRef.current,
-        color: INK_COLOR,
-        width: 2.4,
-      };
-      setAnnotations((prev) => [...prev, ink]);
-      drawingRef.current = null;
-      showToast("Ink saved");
-      return;
-    }
-    drawingRef.current = null;
+  const printDoc = () => {
+    // Prefer printing the current page canvas(es)
+    window.print();
+  };
 
-    const drag = dragRef.current;
-    if (drag?.mode === "highlight" && draftRect && draftRect.w > 0.01 && draftRect.h > 0.005) {
-      const hl: HighlightAnno = {
-        id: uid(),
-        type: "highlight",
-        page,
-        x: draftRect.x,
-        y: draftRect.y,
-        w: draftRect.w,
-        h: draftRect.h,
-        color: HIGHLIGHT_COLOR,
-      };
-      setAnnotations((prev) => [...prev, hl]);
-      showToast("Highlight saved");
+  const pagesToRender = useMemo(() => {
+    if (!pageCount) return [] as number[];
+    if (viewMode === "single") return [page];
+    // Continuous: render nearby pages for performance on large docs
+    const start = Math.max(1, page - 2);
+    const end = Math.min(pageCount, page + 2);
+    // Always include 1..pageCount when small
+    if (pageCount <= 12) {
+      return Array.from({ length: pageCount }, (_, i) => i + 1);
     }
-    dragRef.current = null;
-    setDraftRect(null);
-    setDraggingPan(false);
+    return Array.from({ length: end - start + 1 }, (_, i) => start + i);
+  }, [viewMode, page, pageCount]);
+
+  // Observe which page is in view (continuous)
+  useEffect(() => {
+    if (viewMode !== "continuous" || !stageRef.current) return;
+    const root = stageRef.current;
+    const nodes = root.querySelectorAll<HTMLElement>("[data-page]");
+    const io = new IntersectionObserver(
+      (entries) => {
+        const visible = entries
+          .filter((e) => e.isIntersecting)
+          .sort((a, b) => b.intersectionRatio - a.intersectionRatio);
+        const top = visible[0]?.target.getAttribute("data-page");
+        if (top) {
+          const n = Number(top);
+          if (n && n !== page) setPage(n);
+        }
+      },
+      { root, threshold: [0.35, 0.55, 0.75] },
+    );
+    nodes.forEach((n) => io.observe(n));
+    return () => io.disconnect();
+  }, [viewMode, pagesToRender, page]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const inField =
+        e.target instanceof HTMLTextAreaElement ||
+        e.target instanceof HTMLInputElement;
+
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setSearchOpen(true);
+        requestAnimationFrame(() => searchInputRef.current?.focus());
+        return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "p") {
+        e.preventDefault();
+        printDoc();
+        return;
+      }
+
+      if (inField) {
+        if (e.key === "Escape") {
+          (e.target as HTMLElement).blur();
+          if (searchOpen) setSearchOpen(false);
+        }
+        if (searchOpen && e.key === "Enter") {
+          e.preventDefault();
+          jumpHit(e.shiftKey ? -1 : 1);
+        }
+        return;
+      }
+
+      if (e.key === "Escape") {
+        if (searchOpen) {
+          setSearchOpen(false);
+          return;
+        }
+        onBack();
+      }
+      if (e.key === "ArrowRight" || e.key === "j") goToPage(page + 1);
+      if (e.key === "ArrowLeft" || e.key === "k") goToPage(page - 1);
+      if (e.key === "=" || e.key === "+") {
+        setFit("custom");
+        setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)));
+      }
+      if (e.key === "-" || e.key === "_") {
+        setFit("custom");
+        setZoom((z) => Math.max(0.4, +(z - 0.1).toFixed(2)));
+      }
+      if (e.key === "1") setTool("pan");
+      if (e.key === "2") setTool("highlight");
+      if (e.key === "3") setTool("ink");
+      if (e.key === "4") setTool("note");
+      if (e.key === "r") rotate(1);
+      if (e.key === "R") rotate(-1);
+      if (e.key === "f") void applyFit("width");
+      if (e.key === "F") void applyFit("page");
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [page, pageCount, onBack, goToPage, searchOpen, jumpHit, applyFit]);
+
+  const addAnno = (a: Annotation) => {
+    setAnnotations((prev) => [...prev, a]);
+    if (a.type === "note") setTool("pan");
   };
 
   const updateNote = (id: string, text: string) => {
@@ -304,32 +362,49 @@ export function Reader({ doc, onBack, onMeta }: Props) {
     showToast("Cleared page marks");
   };
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLInputElement) return;
-      if (e.key === "ArrowRight" || e.key === "j") setPage((p) => Math.min(pageCount, p + 1));
-      if (e.key === "ArrowLeft" || e.key === "k") setPage((p) => Math.max(1, p - 1));
-      if (e.key === "=" || e.key === "+") setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)));
-      if (e.key === "-" || e.key === "_") setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)));
-      if (e.key === "1") setTool("pan");
-      if (e.key === "2") setTool("highlight");
-      if (e.key === "3") setTool("ink");
-      if (e.key === "4") setTool("note");
-      if (e.key === "Escape") onBack();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [pageCount, onBack]);
-
   return (
     <div className="reader">
       <header className="topbar">
-        <button type="button" className="btn btn-ghost" onClick={onBack} style={{ padding: "0.45rem 0.9rem" }}>
+        <button
+          type="button"
+          className="btn btn-ghost compact"
+          onClick={onBack}
+        >
           ← Library
         </button>
         <div className="brand-mini">Octavo</div>
         <div className="doc-title">{doc.title}</div>
         <div className="spacer" />
+
+        <div className="tool-group" role="toolbar" aria-label="Panels">
+          <ToolBtn
+            id="thumbs"
+            label="Thumbnails"
+            active={panel === "thumbs"}
+            onClick={() => setPanel((p) => (p === "thumbs" ? null : "thumbs"))}
+          >
+            ▦
+          </ToolBtn>
+          <ToolBtn
+            id="outline"
+            label="Outline"
+            active={panel === "outline"}
+            onClick={() => setPanel((p) => (p === "outline" ? null : "outline"))}
+          >
+            ≡
+          </ToolBtn>
+          <ToolBtn
+            id="search"
+            label="Find (Ctrl/Cmd+F)"
+            active={searchOpen}
+            onClick={() => {
+              setSearchOpen((v) => !v);
+              requestAnimationFrame(() => searchInputRef.current?.focus());
+            }}
+          >
+            ⌕
+          </ToolBtn>
+        </div>
 
         <div className="tool-group" role="toolbar" aria-label="Annotation tools">
           <ToolBtn id="pan" label="Pan" active={tool === "pan"} onClick={() => setTool("pan")}>
@@ -346,27 +421,106 @@ export function Reader({ doc, onBack, onMeta }: Props) {
           <ToolBtn id="ink" label="Ink" active={tool === "ink"} onClick={() => setTool("ink")}>
             ✎
           </ToolBtn>
-          <ToolBtn id="note" label="Sticky note" active={tool === "note"} onClick={() => setTool("note")}>
+          <ToolBtn
+            id="note"
+            label="Sticky note"
+            active={tool === "note"}
+            onClick={() => setTool("note")}
+          >
             ▤
           </ToolBtn>
         </div>
 
-        <div className="chip">
-          <button type="button" aria-label="Zoom out" onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.1).toFixed(2)))}>
+        <div className="tool-group" role="toolbar" aria-label="View">
+          <ToolBtn id="rot-ccw" label="Rotate left" active={false} onClick={() => rotate(-1)}>
+            ↺
+          </ToolBtn>
+          <ToolBtn id="rot-cw" label="Rotate right" active={false} onClick={() => rotate(1)}>
+            ↻
+          </ToolBtn>
+          <ToolBtn
+            id="fit-w"
+            label="Fit width"
+            active={fit === "width"}
+            onClick={() => void applyFit("width")}
+          >
+            ↔
+          </ToolBtn>
+          <ToolBtn
+            id="fit-p"
+            label="Fit page"
+            active={fit === "page"}
+            onClick={() => void applyFit("page")}
+          >
+            ▢
+          </ToolBtn>
+          <ToolBtn
+            id="mode"
+            label={viewMode === "continuous" ? "Single page" : "Continuous scroll"}
+            active={false}
+            onClick={() =>
+              setViewMode((m) => (m === "continuous" ? "single" : "continuous"))
+            }
+          >
+            {viewMode === "continuous" ? "☰" : "▭"}
+          </ToolBtn>
+          <ToolBtn id="print" label="Print" active={false} onClick={printDoc}>
+            ⎙
+          </ToolBtn>
+        </div>
+
+        <label className="chip zoom-chip">
+          <button
+            type="button"
+            aria-label="Zoom out"
+            onClick={() => {
+              setFit("custom");
+              setZoom((z) => Math.max(0.4, +(z - 0.1).toFixed(2)));
+            }}
+          >
             −
           </button>
-          <span>{Math.round(zoom * 100)}%</span>
-          <button type="button" aria-label="Zoom in" onClick={() => setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)))}>
+          <select
+            aria-label="Zoom preset"
+            value={
+              ZOOM_PRESETS.includes(+zoom.toFixed(2))
+                ? String(+zoom.toFixed(2))
+                : "custom"
+            }
+            onChange={(e) => {
+              const v = e.target.value;
+              if (v === "custom") return;
+              setFit("custom");
+              setZoom(Number(v));
+            }}
+          >
+            {!ZOOM_PRESETS.includes(+zoom.toFixed(2)) && (
+              <option value="custom">{Math.round(zoom * 100)}%</option>
+            )}
+            {ZOOM_PRESETS.map((z) => (
+              <option key={z} value={z}>
+                {Math.round(z * 100)}%
+              </option>
+            ))}
+          </select>
+          <button
+            type="button"
+            aria-label="Zoom in"
+            onClick={() => {
+              setFit("custom");
+              setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)));
+            }}
+          >
             +
           </button>
-        </div>
+        </label>
 
         <div className="chip">
           <button
             type="button"
             aria-label="Previous page"
             disabled={pageCount < 1 || page <= 1}
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
+            onClick={() => goToPage(page - 1)}
           >
             ‹
           </button>
@@ -377,90 +531,104 @@ export function Reader({ doc, onBack, onMeta }: Props) {
             type="button"
             aria-label="Next page"
             disabled={pageCount < 1 || page >= pageCount}
-            onClick={() => setPage((p) => Math.min(pageCount, p + 1))}
+            onClick={() => goToPage(page + 1)}
           >
             ›
           </button>
         </div>
 
-        <button type="button" className="btn btn-ghost" style={{ padding: "0.45rem 0.85rem" }} onClick={clearPage}>
+        <button type="button" className="btn btn-ghost compact" onClick={clearPage}>
           Clear page
         </button>
       </header>
 
-      <div className="stage" ref={stageRef}>
-        {loading && <div className="loading">Opening page…</div>}
-        {error && <div className="loading">{error}</div>}
-        <div className="stage-inner">
-          <div className="page-stack">
-            <canvas ref={canvasRef} className="pdf-canvas" />
-            <canvas
-              ref={inkRef}
-              className="anno-layer"
-              style={{ pointerEvents: "none" }}
-            />
-            <div
-              className={`anno-layer ${tool === "pan" ? "pan" : "interactive"} ${draggingPan ? "dragging" : ""}`}
-              onPointerDown={onPointerDown}
-              onPointerMove={onPointerMove}
-              onPointerUp={onPointerUp}
-              onPointerCancel={onPointerUp}
-            >
-              {pageAnnos
-                .filter((a): a is HighlightAnno => a.type === "highlight")
-                .map((h) => (
-                  <div
-                    key={h.id}
-                    className="highlight-box"
-                    style={{
-                      left: `${h.x * 100}%`,
-                      top: `${h.y * 100}%`,
-                      width: `${h.w * 100}%`,
-                      height: `${h.h * 100}%`,
-                      background: h.color,
-                    }}
-                  />
-                ))}
-              {draftRect && (
-                <div
-                  className="draft-rect"
-                  style={{
-                    left: `${draftRect.x * 100}%`,
-                    top: `${draftRect.y * 100}%`,
-                    width: `${draftRect.w * 100}%`,
-                    height: `${draftRect.h * 100}%`,
-                  }}
-                />
-              )}
-              {pageAnnos
-                .filter((a): a is NoteAnno => a.type === "note")
-                .map((n) => (
-                  <div
-                    key={n.id}
-                    className="sticky"
-                    style={{ left: `${n.x * 100}%`, top: `${n.y * 100}%` }}
-                    onPointerDown={(e) => e.stopPropagation()}
-                  >
-                    <button
-                      type="button"
-                      className="sticky-x"
-                      aria-label="Delete note"
-                      onClick={() => removeAnno(n.id)}
-                    >
-                      ×
-                    </button>
-                    <textarea
-                      placeholder="Write a note…"
-                      value={n.text}
-                      autoFocus={!n.text}
-                      onChange={(e) => updateNote(n.id, e.target.value)}
-                    />
-                  </div>
-                ))}
-            </div>
-          </div>
+      {searchOpen && (
+        <div className="find-bar" role="search">
+          <span className="find-label">Find</span>
+          <input
+            ref={searchInputRef}
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Search in document…"
+            autoFocus
+          />
+          <span className="find-count">
+            {searching
+              ? "Searching…"
+              : searchQuery.trim()
+                ? searchHits.length
+                  ? `${hitIndex + 1} / ${searchHits.length}`
+                  : "No matches"
+                : "Type to search"}
+          </span>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Previous match"
+            disabled={!searchHits.length}
+            onClick={() => jumpHit(-1)}
+          >
+            ‹
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Next match"
+            disabled={!searchHits.length}
+            onClick={() => jumpHit(1)}
+          >
+            ›
+          </button>
+          <button
+            type="button"
+            className="icon-btn"
+            aria-label="Close find"
+            onClick={() => setSearchOpen(false)}
+          >
+            ×
+          </button>
         </div>
-        {toast && <div className="status-toast">{toast}</div>}
+      )}
+
+      <div className="reader-body">
+        <ReaderSidebar
+          panel={panel}
+          page={page}
+          pageCount={pageCount}
+          thumbs={thumbs}
+          outline={outline}
+          onSelectPage={goToPage}
+          onClose={() => setPanel(null)}
+        />
+
+        <div className="stage" ref={stageRef}>
+          {loading && <div className="loading">Opening document…</div>}
+          {error && <div className="loading">{error}</div>}
+          <div className={`stage-inner ${viewMode}`}>
+            {pdf &&
+              pagesToRender.map((p) => (
+                <PageView
+                  key={`${p}-${rotation}`}
+                  pdf={pdf}
+                  page={p}
+                  zoom={zoom}
+                  rotation={rotation}
+                  tool={tool}
+                  annotations={annotations}
+                  searchHits={searchHits}
+                  activeHitIndex={hitIndex}
+                  isActivePage={p === page}
+                  onActivate={() => setPage(p)}
+                  onAddAnno={addAnno}
+                  onUpdateNote={updateNote}
+                  onRemoveAnno={removeAnno}
+                  onToast={showToast}
+                  stageRef={stageRef}
+                />
+              ))}
+          </div>
+          {toast && <div className="status-toast">{toast}</div>}
+        </div>
       </div>
     </div>
   );
@@ -477,7 +645,7 @@ function ToolBtn({
   label: string;
   active: boolean;
   onClick: () => void;
-  children: React.ReactNode;
+  children: import("react").ReactNode;
 }) {
   return (
     <button
@@ -492,31 +660,4 @@ function ToolBtn({
       {children}
     </button>
   );
-}
-
-function redrawInk(
-  canvas: HTMLCanvasElement,
-  annos: Annotation[],
-  w: number,
-  h: number,
-  dpr: number,
-) {
-  const ctx = canvas.getContext("2d");
-  if (!ctx) return;
-  ctx.setTransform(1, 0, 0, 1, 0, 0);
-  ctx.clearRect(0, 0, canvas.width, canvas.height);
-  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-  for (const a of annos) {
-    if (a.type !== "ink" || a.points.length < 2) continue;
-    ctx.strokeStyle = a.color;
-    ctx.lineWidth = a.width;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    ctx.beginPath();
-    ctx.moveTo(a.points[0].x * w, a.points[0].y * h);
-    for (let i = 1; i < a.points.length; i++) {
-      ctx.lineTo(a.points[i].x * w, a.points[i].y * h);
-    }
-    ctx.stroke();
-  }
 }
