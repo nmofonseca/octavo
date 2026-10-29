@@ -95,7 +95,8 @@ jobs:
         with:
           args: ${{ matrix.args }}
           uploadWorkflowArtifacts: true
-          workflowArtifactNamePattern: octavo-[platform]-[arch]-v${{ steps.gitversion.outputs.semVer }}
+          # Unique per matrix cell + bundle (deb/AppImage/msi/nsis share platform+arch otherwise → 409).
+          workflowArtifactNamePattern: octavo-${{ matrix.platform }}-[arch]-[bundle]-v${{ steps.gitversion.outputs.semVer }}
 
   # Tag + GitHub Release — contents: write only here (least privilege elsewhere).
   release:
