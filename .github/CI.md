@@ -21,6 +21,7 @@ Default branch is **`main`** (do not target `master`).
 ## Versioning
 
 [`GitVersion.yml`](../GitVersion.yml) uses GitHub Flow on `main`, starting from `next-version: 0.2.0`.
+Tag prefix is `[vV]?` (optional `v`) — GitVersion 6.8 errors with `Failed to parse 0.2.0` when `tag-prefix: v` is combined with a `0.x` `next-version`.
 
 On merge builds, `scripts/apply-version.mjs` writes the computed SemVer into:
 

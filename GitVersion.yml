@@ -1,5 +1,8 @@
-# Semantic versioning for Octavo. Trunk is `main` (master is deleted — do not use).
+# Trunk is `main` (master is deleted — do not use).
+# Note: GitVersion 6.8 fails "Failed to parse 0.2.0" when tag-prefix is the literal `v`
+# together with next-version 0.x; use an optional prefix instead.
 workflow: GitHubFlow/v1
 mode: ContinuousDelivery
-tag-prefix: v
 next-version: 0.2.0
+semantic-version-format: Loose
+tag-prefix: '[vV]?'
