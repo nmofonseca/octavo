@@ -149,6 +149,7 @@ jobs:
             echo "Created and pushed tag ${TAG}"
           fi
 
+          # Closing \) must be escaped so bash does not end the process substitution early.
           mapfile -t ASSETS < <(
             find release-assets -type f \( \
               -name '*.AppImage' -o \
@@ -156,7 +157,7 @@ jobs:
               -name '*.rpm' -o \
               -name '*.msi' -o \
               -name '*-setup.exe' \
-            ) | sort
+            \) | sort
           )
 
           if [ "${#ASSETS[@]}" -eq 0 ]; then
