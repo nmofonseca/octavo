@@ -124,14 +124,21 @@ button {
   align-items: center;
   gap: 0.75rem;
   margin-bottom: 0.85rem;
+  /* Animate the wrapper so the SVG stays on whole pixels (avoids soft blur). */
+  animation: floaty 4.5s ease-in-out infinite;
+  will-change: transform;
 }
 
+.brand-mark-logo,
 .brand-mark img {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
+  width: 56px;
+  height: 56px;
+  display: block;
+  border-radius: 14px;
   box-shadow: 0 12px 36px var(--ember-glow);
-  animation: floaty 4.5s ease-in-out infinite;
+  /* Keep vector edges crisp on HiDPI; avoid browser "optimizations" that soften. */
+  shape-rendering: geometricPrecision;
+  overflow: hidden;
 }
 
 .app-version {
@@ -365,11 +372,15 @@ button {
   font-size: 1.05rem;
 }
 
-.topbar .brand-mini img {
+.topbar .brand-mini img,
+.topbar .brand-mini svg {
   width: 22px;
   height: 22px;
   border-radius: 6px;
   flex-shrink: 0;
+  display: block;
+  overflow: hidden;
+  shape-rendering: geometricPrecision;
 }
 
 .doc-title {
@@ -842,10 +853,10 @@ button {
 @keyframes floaty {
   0%,
   100% {
-    transform: translateY(0);
+    transform: translate3d(0, 0, 0);
   }
   50% {
-    transform: translateY(-4px);
+    transform: translate3d(0, -4px, 0);
   }
 }
 
