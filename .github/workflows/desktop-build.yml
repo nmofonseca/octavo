@@ -1,10 +1,15 @@
 # Desktop packaging — only after merge to main (not on pull requests).
 # After all matrix builds succeed, soft-create a GitVersion tag and publish a GitHub Release.
+# Skip when the push only touches docs/markdown so README/docs edits do not rebuild or release.
 name: desktop-build
 
 on:
   push:
     branches: [main]
+    paths-ignore:
+      - "README.md"
+      - "**/*.md"
+      - "docs/**"
 
 concurrency:
   group: desktop-build-${{ github.ref }}
