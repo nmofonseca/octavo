@@ -59,5 +59,10 @@ jobs:
       - name: Unit tests
         run: npm test
 
+      - name: Icon assets are Logo B (no yellow W)
+        run: |
+          python3 -m pip install --user pillow
+          npm run icons:check
+
       - name: Frontend build
         run: npm run build

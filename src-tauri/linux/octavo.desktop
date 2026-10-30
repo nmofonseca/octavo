@@ -1,0 +1,10 @@
+[Desktop Entry]
+Categories=Office;Viewer;
+Comment=Octavo — multi-platform desktop PDF reader
+Exec={{exec}}
+StartupWMClass={{exec}}
+Icon={{icon}}
+Name=Octavo
+Terminal=false
+Type=Application
+MimeType=application/pdf;

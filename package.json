@@ -10,6 +10,9 @@
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.node.json",
     "lint": "eslint .",
     "test": "vitest run",
+    "icons:check": "node scripts/check-icons-logo-b.mjs",
+    "icons:generate": "tauri icon src-tauri/app-icon.png && node scripts/gen-extra-icon-sizes.mjs",
+
     "test:watch": "vitest",
     "version:apply": "node scripts/apply-version.mjs",
     "tauri": "tauri",
