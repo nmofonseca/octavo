@@ -1,10 +1,17 @@
 # Octavo
 
+[![CI](https://img.shields.io/github/actions/workflow/status/nmofonseca/octavo/test.yml?branch=main&label=CI&logo=github)](https://github.com/nmofonseca/octavo/actions/workflows/test.yml)
+[![Desktop](https://img.shields.io/github/actions/workflow/status/nmofonseca/octavo/desktop-build.yml?branch=main&label=Desktop&logo=github)](https://github.com/nmofonseca/octavo/actions/workflows/desktop-build.yml)
+[![Linux amd64](https://img.shields.io/github/actions/workflow/status/nmofonseca/octavo/desktop-build.yml?branch=main&job=build%20(ubuntu-22.04)&label=Linux%20amd64)](https://github.com/nmofonseca/octavo/actions/workflows/desktop-build.yml)
+[![Linux arm64](https://img.shields.io/github/actions/workflow/status/nmofonseca/octavo/desktop-build.yml?branch=main&job=build%20(ubuntu-24.04-arm)&label=Linux%20arm64)](https://github.com/nmofonseca/octavo/actions/workflows/desktop-build.yml)
+[![Windows amd64](https://img.shields.io/github/actions/workflow/status/nmofonseca/octavo/desktop-build.yml?branch=main&job=build%20(windows-latest)&label=Windows%20amd64)](https://github.com/nmofonseca/octavo/actions/workflows/desktop-build.yml)
+[![Windows arm64](https://img.shields.io/github/actions/workflow/status/nmofonseca/octavo/desktop-build.yml?branch=main&job=build%20(windows-11-arm)&label=Windows%20arm64)](https://github.com/nmofonseca/octavo/actions/workflows/desktop-build.yml)
+
 A personal, multi-platform desktop PDF reader with annotations — highlights, freehand ink, and sticky notes — built for calm, brand-first reading in an **orange + black** palette.
 
 **Stack:** [Tauri 2](https://tauri.app) + React + Vite + [PDF.js](https://mozilla.github.io/pdf.js/)
 
-## Features (v1)
+## ✨ Features (v1)
 
 - Open local PDFs (or the bundled sample) with a **recent library** and resume
 - **Find in document** (Ctrl/Cmd+F) with next/prev, match count, and hit highlights
@@ -15,7 +22,7 @@ A personal, multi-platform desktop PDF reader with annotations — highlights, f
 - Pan/zoom, page navigation
 - Highlight regions, freehand ink, sticky notes (persisted per document)
 
-## Run (development)
+## 🛠️ Run (development)
 
 ### Prerequisites
 
@@ -40,7 +47,7 @@ npm install
 npm run tauri:dev
 ```
 
-## Install (releases)
+## 📦 Install (releases)
 
 After each successful desktop build on `main`, CI publishes a [GitHub Release](https://github.com/nmofonseca/octavo/releases) tagged `v{GitVersion}` with installers for **Linux and Windows × amd64 and arm64**.
 
@@ -89,7 +96,7 @@ Download the **`.msi`** (WiX) and/or **`-setup.exe`** (NSIS) for your arch (`x64
 
 Exact names follow [Tauri’s bundler](https://tauri.app/distribute/); `<ver>` is the stamped semver.
 
-## Packaging notes (local)
+## 🧰 Packaging notes (local)
 
 ```bash
 npm run tauri:build
@@ -97,7 +104,7 @@ npm run tauri:build
 
 Configured bundle targets: **`appimage`**, **`deb`**, **`rpm`**, **`msi`**, **`nsis`**. Artifacts land under `src-tauri/target/release/bundle/`. Prefer native CI runners per OS/arch. Icons live in `src-tauri/icons/`.
 
-## CI / versioning
+## 🚦 CI / versioning
 
 | Workflow | Trigger | Required / notes |
 | --- | --- | --- |
@@ -116,11 +123,11 @@ npm run build
 
 Semver comes from [GitVersion](https://gitversion.net/) (`GitVersion.yml`). CI stamps `package.json`, `src-tauri/tauri.conf.json`, and `src-tauri/Cargo.toml` via `npm run version:apply -- <semver> [majorMinorPatch]`. The library UI shows `v{version}` from `package.json`. Release tags are soft-created from that semver after desktop builds succeed.
 
-## Annotation storage
+## 📝 Annotation storage
 
 Annotation JSON lives in the webview’s `localStorage`, keyed by document id. Packaged builds inherit the OS WebView storage for the app origin.
 
-## Keyboard
+## ⌨️ Keyboard
 
 | Key | Action |
 | --- | --- |
@@ -134,6 +141,6 @@ Annotation JSON lives in the webview’s `localStorage`, keyed by document id. P
 | 1–4 | Pan / Highlight / Ink / Note |
 | Esc | Close find, or back to library |
 
-## License
+## 📄 License
 
 Private / personal use unless otherwise stated.
