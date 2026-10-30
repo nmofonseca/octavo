@@ -7,6 +7,16 @@ import {
 } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import {
+  canRedo,
+  canUndo,
+  createHistory,
+  pushHistory,
+  redoHistory,
+  replacePresent,
+  undoHistory,
+  type HistoryState,
+} from "../lib/history";
+import {
   getOutlineTree,
   openPdf,
   renderThumbnail,
@@ -43,7 +53,10 @@ export function Reader({ doc, onBack, onMeta }: Props) {
   const [rotation, setRotation] = useState<Rotation>(0);
   const [viewMode, setViewMode] = useState<ViewMode>("continuous");
   const [tool, setTool] = useState<Tool>("pan");
-  const [annotations, setAnnotations] = useState<Annotation[]>([]);
+  const [annoHistory, setAnnoHistory] = useState<HistoryState<Annotation[]>>(
+    () => createHistory<Annotation[]>([]),
+  );
+  const annotations = annoHistory.present;
   const [toast, setToast] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +74,7 @@ export function Reader({ doc, onBack, onMeta }: Props) {
   const stageRef = useRef<HTMLDivElement>(null);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const searchAbortRef = useRef<AbortController | null>(null);
+  const thumbAbortRef = useRef<AbortController | null>(null);
 
   const showToast = useCallback((msg: string) => {
     setToast(msg);
@@ -80,7 +94,7 @@ export function Reader({ doc, onBack, onMeta }: Props) {
       try {
         const store = loadDocStore(doc.id);
         if (!cancelled) {
-          setAnnotations(store.annotations);
+          setAnnoHistory(createHistory(store.annotations));
           setPage(store.lastPage || 1);
           setZoom(store.zoom || 1.15);
           setRotation((store.rotation as Rotation) || 0);
@@ -115,27 +129,40 @@ export function Reader({ doc, onBack, onMeta }: Props) {
     });
   }, [annotations, doc.id, page, zoom, rotation, viewMode, pdf]);
 
-  // Thumbnails
+  // Thumbnails — sequential, high-DPI PNG, abortable
   useEffect(() => {
     if (!pdf || pageCount < 1) return;
-    let cancelled = false;
+    thumbAbortRef.current?.abort();
+    const ac = new AbortController();
+    thumbAbortRef.current = ac;
+
     (async () => {
       const next: { page: number; src: string }[] = [];
+      // Sidebar CSS width ~148px; render denser for sharpness (DPR applied inside)
+      const targetWidth = 160;
       for (let p = 1; p <= pageCount; p++) {
-        if (cancelled) return;
+        if (ac.signal.aborted) return;
         try {
-          const src = await renderThumbnail(pdf, p, 128, rotation);
-          if (!cancelled) next.push({ page: p, src });
-          if (!cancelled && (p % 2 === 0 || p === pageCount)) {
-            setThumbs([...next]);
-          }
-        } catch {
-          /* skip broken page */
+          const src = await renderThumbnail(
+            pdf,
+            p,
+            targetWidth,
+            rotation,
+            ac.signal,
+          );
+          if (ac.signal.aborted || !src) continue;
+          next.push({ page: p, src });
+          // Publish after every page so first thumbs aren't stuck blank/skeleton
+          setThumbs([...next]);
+        } catch (e) {
+          if ((e as Error).name === "AbortError") return;
+          /* skip broken page; keep skeleton */
         }
       }
     })();
+
     return () => {
-      cancelled = true;
+      ac.abort();
     };
   }, [pdf, pageCount, rotation]);
 
@@ -281,19 +308,48 @@ export function Reader({ doc, onBack, onMeta }: Props) {
     return () => io.disconnect();
   }, [viewMode, pagesToRender, page]);
 
+  const undo = useCallback(() => {
+    setAnnoHistory((h) => {
+      if (!canUndo(h)) return h;
+      queueMicrotask(() => showToast("Undo"));
+      return undoHistory(h);
+    });
+  }, [showToast]);
+
+  const redo = useCallback(() => {
+    setAnnoHistory((h) => {
+      if (!canRedo(h)) return h;
+      queueMicrotask(() => showToast("Redo"));
+      return redoHistory(h);
+    });
+  }, [showToast]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const inField =
         e.target instanceof HTMLTextAreaElement ||
         e.target instanceof HTMLInputElement;
+      const mod = e.metaKey || e.ctrlKey;
+      const key = e.key.toLowerCase();
 
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+      if (mod && key === "z" && !e.shiftKey) {
+        e.preventDefault();
+        if (!inField) undo();
+        return;
+      }
+      if (mod && (key === "y" || (key === "z" && e.shiftKey))) {
+        e.preventDefault();
+        if (!inField) redo();
+        return;
+      }
+
+      if (mod && key === "f") {
         e.preventDefault();
         setSearchOpen(true);
         requestAnimationFrame(() => searchInputRef.current?.focus());
         return;
       }
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "p") {
+      if (mod && key === "p") {
         e.preventDefault();
         printDoc();
         return;
@@ -339,26 +395,37 @@ export function Reader({ doc, onBack, onMeta }: Props) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [page, pageCount, onBack, goToPage, searchOpen, jumpHit, applyFit]);
+  }, [page, pageCount, onBack, goToPage, searchOpen, jumpHit, applyFit, undo, redo]);
 
   const addAnno = (a: Annotation) => {
-    setAnnotations((prev) => [...prev, a]);
+    setAnnoHistory((h) => pushHistory(h, [...h.present, a]));
     if (a.type === "note") setTool("pan");
   };
 
   const updateNote = (id: string, text: string) => {
-    setAnnotations((prev) =>
-      prev.map((a) => (a.id === id && a.type === "note" ? { ...a, text } : a)),
+    // Live typing should not flood the undo stack
+    setAnnoHistory((h) =>
+      replacePresent(
+        h,
+        h.present.map((a) =>
+          a.id === id && a.type === "note" ? { ...a, text } : a,
+        ),
+      ),
     );
   };
 
   const removeAnno = (id: string) => {
-    setAnnotations((prev) => prev.filter((a) => a.id !== id));
+    setAnnoHistory((h) => pushHistory(h, h.present.filter((a) => a.id !== id)));
     showToast("Removed");
   };
 
   const clearPage = () => {
-    setAnnotations((prev) => prev.filter((a) => a.page !== page));
+    setAnnoHistory((h) =>
+      pushHistory(
+        h,
+        h.present.filter((a) => a.page !== page),
+      ),
+    );
     showToast("Cleared page marks");
   };
 
@@ -372,7 +439,10 @@ export function Reader({ doc, onBack, onMeta }: Props) {
         >
           ← Library
         </button>
-        <div className="brand-mini">Octavo</div>
+        <div className="brand-mini">
+          <img src="/octavo.svg" alt="" width={22} height={22} />
+          Octavo
+        </div>
         <div className="doc-title">{doc.title}</div>
         <div className="spacer" />
 
@@ -431,12 +501,33 @@ export function Reader({ doc, onBack, onMeta }: Props) {
           </ToolBtn>
         </div>
 
+        <div className="tool-group" role="toolbar" aria-label="History">
+          <ToolBtn
+            id="undo"
+            label="Undo (Ctrl/Cmd+Z)"
+            active={false}
+            disabled={!canUndo(annoHistory)}
+            onClick={undo}
+          >
+            ↶
+          </ToolBtn>
+          <ToolBtn
+            id="redo"
+            label="Redo (Ctrl/Cmd+Y)"
+            active={false}
+            disabled={!canRedo(annoHistory)}
+            onClick={redo}
+          >
+            ↷
+          </ToolBtn>
+        </div>
+
         <div className="tool-group" role="toolbar" aria-label="View">
           <ToolBtn id="rot-ccw" label="Rotate left" active={false} onClick={() => rotate(-1)}>
-            ↺
+            ⟲
           </ToolBtn>
           <ToolBtn id="rot-cw" label="Rotate right" active={false} onClick={() => rotate(1)}>
-            ↻
+            ⟳
           </ToolBtn>
           <ToolBtn
             id="fit-w"
@@ -639,12 +730,14 @@ function ToolBtn({
   label,
   active,
   onClick,
+  disabled,
   children,
 }: {
   id: string;
   label: string;
   active: boolean;
   onClick: () => void;
+  disabled?: boolean;
   children: import("react").ReactNode;
 }) {
   return (
@@ -655,6 +748,7 @@ function ToolBtn({
       aria-pressed={active}
       data-tool={id}
       title={label}
+      disabled={disabled}
       onClick={onClick}
     >
       {children}

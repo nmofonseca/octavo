@@ -1,5 +1,5 @@
 import * as pdfjs from "pdfjs-dist";
-import type { PDFDocumentProxy } from "pdfjs-dist";
+import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import type { OutlineItem, Rotation, SearchHit } from "../types";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -129,23 +129,78 @@ export async function searchDocument(
   return hits;
 }
 
+/**
+ * Render a sharp sidebar thumbnail.
+ * Renders at device-pixel density (capped), fills white, exports PNG.
+ */
 export async function renderThumbnail(
   pdf: PDFDocumentProxy,
   pageNum: number,
-  targetWidth = 120,
+  targetWidth = 200,
   rotation: Rotation = 0,
+  signal?: AbortSignal,
 ): Promise<string> {
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+
   const page = await pdf.getPage(pageNum);
-  const base = page.getViewport({ scale: 1, rotation: rotation });
-  const scale = targetWidth / base.width;
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+
+  const dpr =
+    typeof window !== "undefined"
+      ? Math.min(Math.max(window.devicePixelRatio || 1, 1), 2.5)
+      : 2;
+  const cssWidth = Math.max(96, targetWidth);
+  const base = page.getViewport({ scale: 1, rotation });
+  // Floor scale so image-heavy pages still paint ink (avoids blank low-DPI renders)
+  const scale = Math.max(0.55, (cssWidth * dpr) / Math.max(base.width, 1));
   const viewport = page.getViewport({ scale, rotation });
+
   const canvas = document.createElement("canvas");
-  canvas.width = Math.floor(viewport.width);
-  canvas.height = Math.floor(viewport.height);
-  const ctx = canvas.getContext("2d");
+  canvas.width = Math.max(1, Math.floor(viewport.width));
+  canvas.height = Math.max(1, Math.floor(viewport.height));
+  const ctx = canvas.getContext("2d", { alpha: false });
   if (!ctx) return "";
-  await page.render({ canvas, canvasContext: ctx, viewport }).promise;
-  return canvas.toDataURL("image/jpeg", 0.72);
+
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  let task: RenderTask | null = null;
+  const onAbort = () => {
+    try {
+      task?.cancel();
+    } catch {
+      /* ignore */
+    }
+  };
+  signal?.addEventListener("abort", onAbort, { once: true });
+
+  try {
+    task = page.render({
+      canvas,
+      canvasContext: ctx,
+      viewport,
+      intent: "display",
+      background: "#ffffff",
+    });
+    await task.promise;
+  } catch (e) {
+    const name = (e as { name?: string })?.name;
+    if (
+      signal?.aborted ||
+      name === "RenderingCancelledException" ||
+      name === "AbortError"
+    ) {
+      throw new DOMException("Aborted", "AbortError");
+    }
+    throw e;
+  } finally {
+    signal?.removeEventListener("abort", onAbort);
+  }
+
+  if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
+
+  // Keep the high-DPI bitmap so CSS-scaled thumbs stay sharp on retina displays
+  return canvas.toDataURL("image/png");
 }
 
 export { pdfjs };
