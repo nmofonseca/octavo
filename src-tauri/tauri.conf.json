@@ -48,7 +48,12 @@
       "icons/icon.ico"
     ],
     "linux": {
-      "desktopTemplate": "linux/octavo.desktop"
+      "deb": {
+        "desktopTemplate": "linux/octavo.desktop"
+      },
+      "rpm": {
+        "desktopTemplate": "linux/octavo.desktop"
+      }
     }
   }
 }
