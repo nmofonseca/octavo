@@ -85,16 +85,16 @@ CI also builds **`.rpm`** when the Linux bundler runs. Use that on rpm-based dis
 
 Download the **`.msi`** (WiX) and/or **`-setup.exe`** (NSIS) for your arch (`x64` / `arm64`) from the release and run the installer. WebView2 is required (usually preinstalled on Windows 10/11).
 
-### Artifact names (Tauri defaults)
+### Artifact names
 
 | Platform | Arch | Formats | Typical filenames |
 | --- | --- | --- | --- |
 | Linux | amd64 | AppImage, `.deb`, `.rpm` | `Octavo_<ver>_amd64.AppImage`, `Octavo_<ver>_amd64.deb`, `Octavo-<ver>-1.x86_64.rpm` |
-| Linux | arm64 | AppImage, `.deb`, `.rpm` | `Octavo_<ver>_aarch64.AppImage`, `Octavo_<ver>_arm64.deb`, `Octavo-<ver>-1.aarch64.rpm` |
+| Linux | arm64 | AppImage, `.deb`, `.rpm` | `Octavo_<ver>_arm64.AppImage`, `Octavo_<ver>_arm64.deb`, `Octavo-<ver>-1.arm64.rpm` |
 | Windows | amd64 | `.msi`, NSIS `.exe` | `Octavo_<ver>_x64_en-US.msi`, `Octavo_<ver>_x64-setup.exe` |
 | Windows | arm64 | `.msi`, NSIS `.exe` | `Octavo_<ver>_arm64_en-US.msi`, `Octavo_<ver>_arm64-setup.exe` |
 
-Exact names follow [Tauri’s bundler](https://tauri.app/distribute/); `<ver>` is the stamped semver.
+`<ver>` is the stamped semver. CI renames Tauri’s Linux ARM AppImage/rpm `aarch64` labels to **`arm64`** before publishing so ARM assets match `.deb` and Windows.
 
 ## 🧰 Packaging notes (local)
 
