@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Library } from "./components/Library";
 import { Reader } from "./components/Reader";
 import { docIdFromMeta, loadLibrary, saveLibrary, touchOpened } from "./lib/storage";
-import { applyWindowIcon } from "./lib/windowIcon";
+import { scheduleWindowIconApply } from "./lib/windowIcon";
 import type { LibraryDoc } from "./types";
 import "./styles.css";
 
@@ -32,9 +32,7 @@ export default function App() {
   const [docs, setDocs] = useState<LibraryDoc[]>(loadInitialDocs);
   const [active, setActive] = useState<LibraryDoc | null>(null);
 
-  useEffect(() => {
-    void applyWindowIcon();
-  }, []);
+  useEffect(() => scheduleWindowIconApply(), []);
 
   const openDoc = useCallback((doc: LibraryDoc) => {
     if (doc.source === "file" && !doc.url) return;
