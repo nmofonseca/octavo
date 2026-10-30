@@ -27,3 +27,7 @@ dist-ssr
 # tauri icon CLI mobile outputs (desktop-only app)
 src-tauri/icons/ios/
 src-tauri/icons/android/
+
+# Local QA fixtures (copied from agent store; do not ship)
+public/samples/alphabet-practice-handwriting-sheets.pdf
+public/samples/three-day-workout-schedule.pdf
