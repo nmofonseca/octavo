@@ -1,21 +1,20 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
-  <rect width="64" height="64" rx="14" fill="#0A0A0B"/>
-  <!-- Octagon frame -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" fill="none" shape-rendering="geometricPrecision">
+  <!-- Logo B favicon: orange octagon + open book on black (matches app-icon.png) -->
+  <rect width="512" height="512" fill="#0A0A0B"/>
+  <!-- Octagon ring -->
   <path
-    d="M24.5 10h15L46 18.5v27L39.5 54h-15L18 45.5v-27L24.5 10z"
-    stroke="#FF7A1A"
-    stroke-width="4.5"
-    stroke-linejoin="round"
-    fill="none"
-  />
-  <!-- Open book: left white page, right orange page -->
-  <path
-    d="M22.5 28.5c2.8-3.2 5.8-4.6 9.5-4.6v16.8c-3.4 0-6.2 1.1-9.5 4.2-.3.3-.7.1-.7-.3V29c0-.2.2-.4.7-.5z"
-    fill="#F5F5F5"
-  />
-  <path
-    d="M41.5 28.5c-2.8-3.2-5.8-4.6-9.5-4.6v16.8c3.4 0 6.2 1.1 9.5 4.2.3.3.7.1.7-.3V29c0-.2-.2-.4-.7-.5z"
     fill="#FF7A1A"
+    fill-rule="evenodd"
+    d="M156 48h200L464 156v200L356 464H156L48 356V156L156 48zm22 60L108 178v156l70 70h156l70-70V178l-70-70H178z"
   />
-  <path d="M32 24v16.8" stroke="#0A0A0B" stroke-width="1.4" stroke-linecap="round"/>
+  <!-- Open book — left white / right orange; peaks at outer corners -->
+  <path
+    fill="#F5F5F5"
+    d="M146 177c0 0 2-2 8-2 36 0 72 18 102 52v133c-28 8-58 24-102 55-5 3-10 2-10-3V177z"
+  />
+  <path
+    fill="#FF7A1A"
+    d="M366 177c0 0-2-2-8-2-36 0-72 18-102 52v133c28 8 58 24 102 55 5 3 10 2 10-3V177z"
+  />
+  <path d="M256 227v135" stroke="#0A0A0B" stroke-width="14" stroke-linecap="round"/>
 </svg>

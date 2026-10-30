@@ -1,6 +1,7 @@
 import { useMemo, useRef } from "react";
 import type { LibraryDoc } from "../types";
 import { APP_VERSION } from "../version";
+import { OctavoLogo } from "./OctavoLogo";
 
 type Props = {
   docs: LibraryDoc[];
@@ -43,7 +44,7 @@ export function Library({ docs, onOpen, onOpenFile, onOpenSample, onRemove }: Pr
     <div className="library">
       <section className="library-hero" aria-label="Octavo">
         <div className="brand-mark">
-          <img src="/octavo.svg" alt="" width={48} height={48} />
+          <OctavoLogo size={56} className="brand-mark-logo" />
         </div>
         <h1 className="brand">Octavo</h1>
         <p className="hero-line">

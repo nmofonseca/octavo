@@ -23,6 +23,7 @@ import {
   searchDocument,
 } from "../lib/pdf";
 import { loadDocStore, upsertAnnotations } from "../lib/storage";
+import { OctavoLogo } from "./OctavoLogo";
 import type {
   Annotation,
   FitMode,
@@ -462,7 +463,7 @@ export function Reader({ doc, onBack, onMeta }: Props) {
           ← Library
         </button>
         <div className="brand-mini">
-          <img src="/octavo.svg" alt="" width={22} height={22} />
+          <OctavoLogo size={22} />
           Octavo
         </div>
         <div className="doc-title">{doc.title}</div>
