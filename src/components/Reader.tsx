@@ -25,6 +25,12 @@ import {
   searchDocument,
 } from "../lib/pdf";
 import { loadDocStore, upsertAnnotations } from "../lib/storage";
+import {
+  ZOOM_PRESETS,
+  nextZoomFromWheelDelta,
+  zoomIn,
+  zoomOut,
+} from "../lib/zoom";
 import { OctavoLogo } from "./OctavoLogo";
 import type {
   Annotation,
@@ -44,8 +50,6 @@ type Props = {
   onBack: () => void;
   onMeta: (pageCount: number, lastPage: number) => void;
 };
-
-const ZOOM_PRESETS = [0.5, 0.75, 1, 1.25, 1.5, 2];
 
 export function Reader({ doc, onBack, onMeta }: Props) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
@@ -412,11 +416,11 @@ export function Reader({ doc, onBack, onMeta }: Props) {
       if (e.key === "ArrowLeft" || e.key === "k") goToPage(page - 1);
       if (e.key === "=" || e.key === "+") {
         setFit("custom");
-        setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)));
+        setZoom(zoomIn);
       }
       if (e.key === "-" || e.key === "_") {
         setFit("custom");
-        setZoom((z) => Math.max(0.4, +(z - 0.1).toFixed(2)));
+        setZoom(zoomOut);
       }
       if (e.key === "1") setTool("pan");
       if (e.key === "2") setTool("highlight");
@@ -430,6 +434,21 @@ export function Reader({ doc, onBack, onMeta }: Props) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [page, pageCount, onBack, goToPage, searchOpen, jumpHit, applyFit, undo, redo]);
+
+  // Ctrl/Meta + wheel zooms on the stage; plain wheel still scrolls.
+  // Non-passive so preventDefault can stop browser/page zoom/scroll.
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent) => {
+      if (!(e.ctrlKey || e.metaKey)) return;
+      e.preventDefault();
+      setFit("custom");
+      setZoom((z) => nextZoomFromWheelDelta(z, e.deltaY));
+    };
+    el.addEventListener("wheel", onWheel, { passive: false });
+    return () => el.removeEventListener("wheel", onWheel);
+  }, []);
 
   const addAnno = (a: Annotation) => {
     setAnnoHistory((h) => pushHistory(h, [...h.present, a]));
@@ -600,7 +619,7 @@ export function Reader({ doc, onBack, onMeta }: Props) {
             aria-label="Zoom out"
             onClick={() => {
               setFit("custom");
-              setZoom((z) => Math.max(0.4, +(z - 0.1).toFixed(2)));
+              setZoom(zoomOut);
             }}
           >
             −
@@ -633,7 +652,7 @@ export function Reader({ doc, onBack, onMeta }: Props) {
             aria-label="Zoom in"
             onClick={() => {
               setFit("custom");
-              setZoom((z) => Math.min(3, +(z + 0.1).toFixed(2)));
+              setZoom(zoomIn);
             }}
           >
             +
