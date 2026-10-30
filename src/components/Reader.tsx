@@ -5,7 +5,7 @@ import {
   useRef,
   useState,
 } from "react";
-import type { PDFDocumentProxy } from "pdfjs-dist";
+import type { PDFDocumentProxy, PDFWorker } from "pdfjs-dist";
 import {
   canRedo,
   canUndo,
@@ -17,8 +17,10 @@ import {
   type HistoryState,
 } from "../lib/history";
 import {
+  destroyThumbPdf,
   getOutlineTree,
   openPdf,
+  openPdfForThumbs,
   renderThumbnailReliable,
   searchDocument,
 } from "../lib/pdf";
@@ -130,25 +132,37 @@ export function Reader({ doc, onBack, onMeta }: Props) {
     });
   }, [annotations, doc.id, page, zoom, rotation, viewMode, pdf]);
 
-  // Thumbnails — dedicated PDF proxy (avoids racing PageView page.render),
-  // sequential high-DPI PNG with blank/cancel retries, abortable.
+  // Thumbnails — dedicated PDF + dedicated worker (destroy cannot kill the
+  // viewer worker). Deferred so visible PageViews claim the first paint slots;
+  // sequential high-DPI PNG with blank/cancel retries; abortable.
   useEffect(() => {
     if (!pdf || pageCount < 1) return;
     thumbAbortRef.current?.abort();
     const ac = new AbortController();
     thumbAbortRef.current = ac;
     let thumbPdf: PDFDocumentProxy | null = null;
+    let thumbWorker: PDFWorker | null = null;
+    let usedViewerPdf = false;
 
     (async () => {
+      // Yield two animation frames + a short beat so main PageView paints for
+      // the initial continuous window are not starved by thumb operator lists.
+      await new Promise<void>((r) => requestAnimationFrame(() => r()));
+      await new Promise<void>((r) => requestAnimationFrame(() => r()));
+      await new Promise<void>((r) => window.setTimeout(r, 48));
+      if (ac.signal.aborted) return;
+
       try {
-        // Separate document so main-view renders never cancel thumb tasks
-        thumbPdf = await openPdf(doc.url);
+        const opened = await openPdfForThumbs(doc.url);
+        thumbPdf = opened.pdf;
+        thumbWorker = opened.worker;
       } catch {
         // Fall back to the viewer proxy if a second open fails
         thumbPdf = pdf;
+        usedViewerPdf = true;
       }
       if (ac.signal.aborted) {
-        if (thumbPdf && thumbPdf !== pdf) void thumbPdf.loadingTask.destroy();
+        if (!usedViewerPdf) await destroyThumbPdf(thumbPdf, thumbWorker);
         return;
       }
 
@@ -169,19 +183,15 @@ export function Reader({ doc, onBack, onMeta }: Props) {
           next.push({ page: p, src });
           // Publish after every page so first thumbs aren't stuck blank/skeleton
           setThumbs([...next]);
+          // Yield to the main thread between thumbs so PageView rAF paints run
+          await new Promise<void>((r) => requestAnimationFrame(() => r()));
         } catch (e) {
           if ((e as Error).name === "AbortError" || ac.signal.aborted) break;
           /* skip broken page after retries; keep skeleton */
         }
       }
 
-      if (thumbPdf && thumbPdf !== pdf) {
-        try {
-          await thumbPdf.loadingTask.destroy();
-        } catch {
-          /* ignore */
-        }
-      }
+      if (!usedViewerPdf) await destroyThumbPdf(thumbPdf, thumbWorker);
     })();
 
     return () => {

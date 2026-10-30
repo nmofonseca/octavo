@@ -62,6 +62,14 @@ export function isAbortError(e: unknown): boolean {
 
 export const THUMB_RETRY_DELAYS_MS = [0, 40, 120, 280];
 
+/** Main PageView paint retries — keep short so continuous scroll stays responsive. */
+export const PAGE_RETRY_DELAYS_MS = [0, 32, 80, 160, 280];
+
+export function isRenderCancelledError(e: unknown): boolean {
+  const name = (e as { name?: string })?.name;
+  return name === "RenderingCancelledException" || name === "AbortError";
+}
+
 function sleep(ms: number, signal?: AbortSignal): Promise<void> {
   if (ms <= 0) return Promise.resolve();
   return new Promise((resolve, reject) => {

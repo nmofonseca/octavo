@@ -6,6 +6,11 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
+import {
+  PAGE_RETRY_DELAYS_MS,
+  isMostlyBlankCanvas,
+  isRenderCancelledError,
+} from "../lib/thumb-utils";
 import type {
   Annotation,
   HighlightAnno,
@@ -92,47 +97,103 @@ export function PageView({
     [searchHits, page],
   );
 
+  // PDF paint — retries cancelled/blank results so thumb work cannot leave a
+  // white main page. Annotation ink is a separate effect so mark edits do not
+  // cancel an in-flight page.render().
   useEffect(() => {
     let cancelled = false;
     let renderTask: { cancel: () => void; promise: Promise<unknown> } | null =
       null;
+    const delays = PAGE_RETRY_DELAYS_MS;
+
+    const sleep = (ms: number) =>
+      new Promise<void>((resolve) => {
+        window.setTimeout(resolve, ms);
+      });
+
     (async () => {
       setReady(false);
-      const pg = await pdf.getPage(page);
-      if (cancelled || !canvasRef.current) return;
-      const viewport = pg.getViewport({ scale: zoom, rotation });
-      const canvas = canvasRef.current;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      const dpr = window.devicePixelRatio || 1;
-      canvas.width = Math.floor(viewport.width * dpr);
-      canvas.height = Math.floor(viewport.height * dpr);
-      canvas.style.width = `${viewport.width}px`;
-      canvas.style.height = `${viewport.height}px`;
-      pageSizeRef.current = { w: viewport.width, h: viewport.height };
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      try {
-        renderTask = pg.render({ canvas, canvasContext: ctx, viewport });
-        await renderTask.promise;
-      } catch (e) {
-        if (
-          cancelled ||
-          (e as { name?: string })?.name === "RenderingCancelledException"
-        ) {
+      let lastError: unknown;
+
+      for (let i = 0; i < delays.length; i++) {
+        if (cancelled) return;
+        if (delays[i]) await sleep(delays[i]!);
+        if (cancelled || !canvasRef.current) return;
+
+        try {
+          const pg = await pdf.getPage(page);
+          if (cancelled || !canvasRef.current) return;
+
+          const viewport = pg.getViewport({ scale: zoom, rotation });
+          const canvas = canvasRef.current;
+          const ctx = canvas.getContext("2d", { alpha: false });
+          if (!ctx) return;
+
+          const dpr = window.devicePixelRatio || 1;
+          canvas.width = Math.floor(viewport.width * dpr);
+          canvas.height = Math.floor(viewport.height * dpr);
+          canvas.style.width = `${viewport.width}px`;
+          canvas.style.height = `${viewport.height}px`;
+          pageSizeRef.current = { w: viewport.width, h: viewport.height };
+
+          // Opaque white so a cancelled mid-paint never shows through as empty paper
+          ctx.setTransform(1, 0, 0, 1, 0, 0);
+          ctx.fillStyle = "#ffffff";
+          ctx.fillRect(0, 0, canvas.width, canvas.height);
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+          renderTask = pg.render({
+            canvas,
+            canvasContext: ctx,
+            viewport,
+            intent: "display",
+            background: "#ffffff",
+          });
+          await renderTask.promise;
+          renderTask = null;
+
+          if (cancelled) return;
+
+          // Image-heavy pages can finish with a white bitmap when starved —
+          // retry instead of publishing a blank main view.
+          if (isMostlyBlankCanvas(canvas)) {
+            lastError = new Error(`Blank page render for page ${page}`);
+            continue;
+          }
+
+          if (inkRef.current) {
+            inkRef.current.width = canvas.width;
+            inkRef.current.height = canvas.height;
+            inkRef.current.style.width = canvas.style.width;
+            inkRef.current.style.height = canvas.style.height;
+            redrawInk(
+              inkRef.current,
+              pageAnnos,
+              viewport.width,
+              viewport.height,
+              dpr,
+            );
+          }
+          setReady(true);
           return;
+        } catch (e) {
+          renderTask = null;
+          // Effect teardown cancel — stop; a new effect owns the next paint.
+          if (cancelled) return;
+          // Concurrent cancel (thumb starvation / StrictMode) — retry.
+          if (isRenderCancelledError(e)) {
+            lastError = e;
+            continue;
+          }
+          throw e;
         }
-        throw e;
       }
-      if (cancelled) return;
-      if (inkRef.current) {
-        inkRef.current.width = canvas.width;
-        inkRef.current.height = canvas.height;
-        inkRef.current.style.width = canvas.style.width;
-        inkRef.current.style.height = canvas.style.height;
-        redrawInk(inkRef.current, pageAnnos, viewport.width, viewport.height, dpr);
+
+      if (!cancelled && lastError) {
+        console.warn("[octavo] PageView paint failed after retries", lastError);
       }
-      setReady(true);
     })();
+
     return () => {
       cancelled = true;
       try {
@@ -141,7 +202,24 @@ export function PageView({
         /* ignore */
       }
     };
-  }, [pdf, page, zoom, rotation, pageAnnos]);
+    // pageAnnos intentionally omitted — ink redraw is handled below
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see comment
+  }, [pdf, page, zoom, rotation]);
+
+  // Keep ink overlay in sync without re-running PDF page.render
+  useEffect(() => {
+    const ink = inkRef.current;
+    const canvas = canvasRef.current;
+    if (!ink || !canvas || !ready) return;
+    const dpr = window.devicePixelRatio || 1;
+    redrawInk(
+      ink,
+      pageAnnos,
+      pageSizeRef.current.w,
+      pageSizeRef.current.h,
+      dpr,
+    );
+  }, [pageAnnos, ready]);
 
   const toNorm = (clientX: number, clientY: number) => {
     const canvas = canvasRef.current!;

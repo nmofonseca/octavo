@@ -1,5 +1,5 @@
 import * as pdfjs from "pdfjs-dist";
-import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
+import type { PDFDocumentProxy, PDFWorker, RenderTask } from "pdfjs-dist";
 import type { OutlineItem, Rotation, SearchHit } from "../types";
 import {
   BlankThumbnailError,
@@ -11,10 +11,12 @@ import {
 
 export {
   BlankThumbnailError,
+  PAGE_RETRY_DELAYS_MS,
   THUMB_RETRY_DELAYS_MS,
   attemptWithRetries,
   isMostlyBlankCanvas,
   isMostlyBlankRgba,
+  isRenderCancelledError,
 } from "./thumb-utils";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
@@ -28,6 +30,56 @@ export async function openPdf(url: string): Promise<PDFDocumentProxy> {
     withCredentials: false,
   });
   return task.promise;
+}
+
+/**
+ * Open a PDF on a dedicated worker for sidebar thumbnails.
+ * Isolates thumb lifecycle (including destroy) from the main viewer worker so
+ * finishing thumbs cannot terminate in-flight PageView paints.
+ */
+export async function openPdfForThumbs(
+  url: string,
+): Promise<{ pdf: PDFDocumentProxy; worker: PDFWorker }> {
+  // pdfjs-dist typings incorrectly narrow `name` to null; runtime accepts a label.
+  const worker = new pdfjs.PDFWorker({
+    name: `octavo-thumbs-${Date.now()}` as unknown as null,
+  });
+  try {
+    const task = pdfjs.getDocument({
+      url,
+      withCredentials: false,
+      worker,
+    });
+    const pdf = await task.promise;
+    return { pdf, worker };
+  } catch (e) {
+    try {
+      worker.destroy();
+    } catch {
+      /* ignore */
+    }
+    throw e;
+  }
+}
+
+/** Tear down a thumb-only document + its dedicated worker. */
+export async function destroyThumbPdf(
+  pdf: PDFDocumentProxy | null | undefined,
+  worker?: PDFWorker | null,
+): Promise<void> {
+  if (!pdf && !worker) return;
+  try {
+    if (pdf) await pdf.loadingTask.destroy();
+  } catch {
+    /* ignore */
+  }
+  // loadingTask.destroy already terminates task._worker; belt-and-suspenders
+  // if open failed after worker construction or worker was passed separately.
+  try {
+    if (worker && !worker.destroyed) worker.destroy();
+  } catch {
+    /* ignore */
+  }
 }
 
 async function destToPage(
