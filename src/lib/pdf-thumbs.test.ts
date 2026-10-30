@@ -3,8 +3,7 @@ import {
   BlankThumbnailError,
   attemptWithRetries,
   isMostlyBlankRgba,
-  renderThumbnailReliable,
-} from "./pdf";
+} from "./thumb-utils";
 
 function rgbaFill(
   width: number,
@@ -102,11 +101,5 @@ describe("attemptWithRetries", () => {
     );
     await expect(promise).rejects.toMatchObject({ name: "AbortError" });
     expect(n).toBe(1);
-  });
-});
-
-describe("renderThumbnailReliable", () => {
-  it("is exported for the reader", () => {
-    expect(typeof renderThumbnailReliable).toBe("function");
   });
 });
