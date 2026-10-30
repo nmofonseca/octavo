@@ -2,10 +2,12 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <!-- Prefer the cache-busted window mark first so WebKit does not revive an old yellow favicon. -->
+    <!-- PNG-only favicons: WebKit on Linux can push the document icon into the
+         window decoration; an SVG mark has been observed to fall back to a
+         stale yellow default. Prefer the cache-busted window mark first. -->
     <link rel="icon" type="image/png" sizes="256x256" href="/octavo-window-icon.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/octavo-window-icon.png" />
     <link rel="icon" type="image/png" sizes="512x512" href="/octavo-icon.png" />
-    <link rel="icon" type="image/svg+xml" href="/octavo.svg" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="theme-color" content="#0a0a0b" />
     <title>Octavo</title>

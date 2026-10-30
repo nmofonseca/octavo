@@ -6,10 +6,12 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from "react";
 import type { PDFDocumentProxy } from "pdfjs-dist";
+import { enqueuePageRender } from "../lib/render-queue";
 import {
   PAGE_RETRY_DELAYS_MS,
   isMostlyBlankCanvas,
   isRenderCancelledError,
+  waitForPaintFlush,
 } from "../lib/thumb-utils";
 import type {
   Annotation,
@@ -121,67 +123,83 @@ export function PageView({
         if (cancelled || !canvasRef.current) return;
 
         try {
-          const pg = await pdf.getPage(page);
-          if (cancelled || !canvasRef.current) return;
+          await enqueuePageRender(async () => {
+            if (cancelled || !canvasRef.current) return;
 
-          const viewport = pg.getViewport({ scale: zoom, rotation });
-          const canvas = canvasRef.current;
-          const ctx = canvas.getContext("2d", { alpha: false });
-          if (!ctx) return;
+            const pg = await pdf.getPage(page);
+            if (cancelled || !canvasRef.current) return;
 
-          const dpr = window.devicePixelRatio || 1;
-          canvas.width = Math.floor(viewport.width * dpr);
-          canvas.height = Math.floor(viewport.height * dpr);
-          canvas.style.width = `${viewport.width}px`;
-          canvas.style.height = `${viewport.height}px`;
-          pageSizeRef.current = { w: viewport.width, h: viewport.height };
+            const viewport = pg.getViewport({ scale: zoom, rotation });
+            const canvas = canvasRef.current;
+            const ctx = canvas.getContext("2d", { alpha: false });
+            if (!ctx) return;
 
-          // Opaque white so a cancelled mid-paint never shows through as empty paper
-          ctx.setTransform(1, 0, 0, 1, 0, 0);
-          ctx.fillStyle = "#ffffff";
-          ctx.fillRect(0, 0, canvas.width, canvas.height);
-          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            const dpr = window.devicePixelRatio || 1;
+            canvas.width = Math.floor(viewport.width * dpr);
+            canvas.height = Math.floor(viewport.height * dpr);
+            canvas.style.width = `${viewport.width}px`;
+            canvas.style.height = `${viewport.height}px`;
+            pageSizeRef.current = { w: viewport.width, h: viewport.height };
 
-          renderTask = pg.render({
-            canvas,
-            canvasContext: ctx,
-            viewport,
-            intent: "display",
-            background: "#ffffff",
+            // Opaque white so a cancelled mid-paint never shows through as empty paper
+            ctx.setTransform(1, 0, 0, 1, 0, 0);
+            ctx.fillStyle = "#ffffff";
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+
+            renderTask = pg.render({
+              canvas,
+              canvasContext: ctx,
+              viewport,
+              intent: "display",
+              background: "#ffffff",
+            });
+            await renderTask.promise;
+            renderTask = null;
+
+            if (cancelled) return;
+
+            // WebKit may resolve before pixels are readable — flush then probe.
+            await waitForPaintFlush();
+            if (cancelled || !canvasRef.current) return;
+
+            // Image-heavy pages can finish with a white bitmap when starved —
+            // retry instead of publishing a blank main view.
+            if (isMostlyBlankCanvas(canvas)) {
+              throw Object.assign(
+                new Error(`Blank page render for page ${page}`),
+                { name: "BlankPageRenderError" },
+              );
+            }
+
+            if (inkRef.current) {
+              inkRef.current.width = canvas.width;
+              inkRef.current.height = canvas.height;
+              inkRef.current.style.width = canvas.style.width;
+              inkRef.current.style.height = canvas.style.height;
+              redrawInk(
+                inkRef.current,
+                pageAnnos,
+                viewport.width,
+                viewport.height,
+                dpr,
+              );
+            }
+            setReady(true);
           });
-          await renderTask.promise;
-          renderTask = null;
-
           if (cancelled) return;
-
-          // Image-heavy pages can finish with a white bitmap when starved —
-          // retry instead of publishing a blank main view.
-          if (isMostlyBlankCanvas(canvas)) {
-            lastError = new Error(`Blank page render for page ${page}`);
-            continue;
+          // enqueuePageRender resolved without throwing → page is ready
+          if (canvasRef.current && !cancelled) {
+            // setReady may already have run inside the queue task
+            return;
           }
-
-          if (inkRef.current) {
-            inkRef.current.width = canvas.width;
-            inkRef.current.height = canvas.height;
-            inkRef.current.style.width = canvas.style.width;
-            inkRef.current.style.height = canvas.style.height;
-            redrawInk(
-              inkRef.current,
-              pageAnnos,
-              viewport.width,
-              viewport.height,
-              dpr,
-            );
-          }
-          setReady(true);
           return;
         } catch (e) {
           renderTask = null;
           // Effect teardown cancel — stop; a new effect owns the next paint.
           if (cancelled) return;
           // Concurrent cancel (thumb starvation / StrictMode) — retry.
-          if (isRenderCancelledError(e)) {
+          if (isRenderCancelledError(e) || (e as { name?: string })?.name === "BlankPageRenderError") {
             lastError = e;
             continue;
           }

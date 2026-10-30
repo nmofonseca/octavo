@@ -48,12 +48,36 @@ export function isMostlyBlankCanvas(canvas: HTMLCanvasElement): boolean {
   if (!ctx) return true;
   const { width, height } = canvas;
   try {
-    const { data } = ctx.getImageData(0, 0, width, height);
+    // Force a CPU readback path. On WebKitGTK, sampling the display canvas
+    // immediately after pdf.js resolve can still see an uncleared white buffer
+    // even when the compositor later shows ink — copy via drawImage first.
+    const probe = document.createElement("canvas");
+    probe.width = width;
+    probe.height = height;
+    const probeCtx = probe.getContext("2d", {
+      alpha: false,
+      willReadFrequently: true,
+    });
+    if (!probeCtx) {
+      const { data } = ctx.getImageData(0, 0, width, height);
+      return isMostlyBlankRgba(data, width, height);
+    }
+    probeCtx.drawImage(canvas, 0, 0);
+    const { data } = probeCtx.getImageData(0, 0, width, height);
     return isMostlyBlankRgba(data, width, height);
   } catch {
     // Tainted / oversized canvas — treat as unknown (not blank) so we keep the bitmap
     return false;
   }
+}
+
+/** Yield to the compositor so WebKit flushes pending canvas paints. */
+export function waitForPaintFlush(): Promise<void> {
+  return new Promise((resolve) => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => resolve());
+    });
+  });
 }
 
 export function isAbortError(e: unknown): boolean {
@@ -62,8 +86,11 @@ export function isAbortError(e: unknown): boolean {
 
 export const THUMB_RETRY_DELAYS_MS = [0, 40, 120, 280];
 
-/** Main PageView paint retries — keep short so continuous scroll stays responsive. */
-export const PAGE_RETRY_DELAYS_MS = [0, 32, 80, 160, 280];
+/**
+ * Main PageView paint retries. Slightly longer than thumbs: image-heavy pages
+ * on WebKit need time after a cancelled sibling paint before ink sticks.
+ */
+export const PAGE_RETRY_DELAYS_MS = [0, 40, 100, 220, 400, 700];
 
 export function isRenderCancelledError(e: unknown): boolean {
   const name = (e as { name?: string })?.name;

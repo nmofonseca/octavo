@@ -76,6 +76,32 @@ export default function App() {
     setActive(doc);
   }, []);
 
+  // Dev/QA: ?open=/samples/foo.pdf auto-opens (browser + packaged repros).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const openPath = params.get("open");
+    if (!openPath || !openPath.startsWith("/") || openPath.includes("://")) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(openPath);
+        if (!res.ok || cancelled) return;
+        const blob = await res.blob();
+        const name =
+          openPath.split("/").pop()?.replace(/[^\w.-]+/g, "_") || "document.pdf";
+        const file = new File([blob], name.endsWith(".pdf") ? name : `${name}.pdf`, {
+          type: "application/pdf",
+        });
+        if (!cancelled) openFile(file);
+      } catch {
+        /* ignore */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [openFile]);
+
   const removeDoc = useCallback((id: string) => {
     setDocs((prev) => {
       const next = prev.filter((d) => d.id !== id);

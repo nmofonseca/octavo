@@ -145,11 +145,11 @@ export function Reader({ doc, onBack, onMeta }: Props) {
     let usedViewerPdf = false;
 
     (async () => {
-      // Yield two animation frames + a short beat so main PageView paints for
-      // the initial continuous window are not starved by thumb operator lists.
+      // Yield so the first main PageView paints claim the render queue before
+      // thumb operator lists start (critical on WebKitGTK / AppImage).
       await new Promise<void>((r) => requestAnimationFrame(() => r()));
       await new Promise<void>((r) => requestAnimationFrame(() => r()));
-      await new Promise<void>((r) => window.setTimeout(r, 48));
+      await new Promise<void>((r) => window.setTimeout(r, 120));
       if (ac.signal.aborted) return;
 
       try {
@@ -309,11 +309,12 @@ export function Reader({ doc, onBack, onMeta }: Props) {
   const pagesToRender = useMemo(() => {
     if (!pageCount) return [] as number[];
     if (viewMode === "single") return [page];
-    // Continuous: render nearby pages for performance on large docs
-    const start = Math.max(1, page - 2);
-    const end = Math.min(pageCount, page + 2);
-    // Always include 1..pageCount when small
-    if (pageCount <= 12) {
+    // Continuous: keep a wider window so scroll/zoom remounts less often.
+    // Remounts on WebKit were a common path to blank main canvases.
+    const start = Math.max(1, page - 3);
+    const end = Math.min(pageCount, page + 4);
+    // Always include 1..pageCount when modest
+    if (pageCount <= 16) {
       return Array.from({ length: pageCount }, (_, i) => i + 1);
     }
     return Array.from({ length: end - start + 1 }, (_, i) => start + i);
