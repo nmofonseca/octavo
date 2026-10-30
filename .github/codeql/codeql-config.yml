@@ -1,0 +1,21 @@
+name: Octavo CodeQL
+
+# Advanced config — adjust paths/queries without rewriting the workflow.
+paths:
+  - src
+  - src-tauri
+  - scripts
+  - vite.config.ts
+  - vitest.config.ts
+  - eslint.config.js
+
+paths-ignore:
+  - tools/**
+  - "**/*.md"
+  - public/**
+  - "**/node_modules/**"
+  - "**/dist/**"
+  - "**/target/**"
+
+queries:
+  - uses: security-extended
