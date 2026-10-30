@@ -94,6 +94,8 @@ export function PageView({
 
   useEffect(() => {
     let cancelled = false;
+    let renderTask: { cancel: () => void; promise: Promise<unknown> } | null =
+      null;
     (async () => {
       setReady(false);
       const pg = await pdf.getPage(page);
@@ -109,7 +111,18 @@ export function PageView({
       canvas.style.height = `${viewport.height}px`;
       pageSizeRef.current = { w: viewport.width, h: viewport.height };
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      await pg.render({ canvas, canvasContext: ctx, viewport }).promise;
+      try {
+        renderTask = pg.render({ canvas, canvasContext: ctx, viewport });
+        await renderTask.promise;
+      } catch (e) {
+        if (
+          cancelled ||
+          (e as { name?: string })?.name === "RenderingCancelledException"
+        ) {
+          return;
+        }
+        throw e;
+      }
       if (cancelled) return;
       if (inkRef.current) {
         inkRef.current.width = canvas.width;
@@ -122,6 +135,11 @@ export function PageView({
     })();
     return () => {
       cancelled = true;
+      try {
+        renderTask?.cancel();
+      } catch {
+        /* ignore */
+      }
     };
   }, [pdf, page, zoom, rotation, pageAnnos]);
 

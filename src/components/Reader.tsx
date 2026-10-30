@@ -19,7 +19,7 @@ import {
 import {
   getOutlineTree,
   openPdf,
-  renderThumbnail,
+  renderThumbnailReliable,
   searchDocument,
 } from "../lib/pdf";
 import { loadDocStore, upsertAnnotations } from "../lib/storage";
@@ -129,22 +129,36 @@ export function Reader({ doc, onBack, onMeta }: Props) {
     });
   }, [annotations, doc.id, page, zoom, rotation, viewMode, pdf]);
 
-  // Thumbnails — sequential, high-DPI PNG, abortable
+  // Thumbnails — dedicated PDF proxy (avoids racing PageView page.render),
+  // sequential high-DPI PNG with blank/cancel retries, abortable.
   useEffect(() => {
     if (!pdf || pageCount < 1) return;
     thumbAbortRef.current?.abort();
     const ac = new AbortController();
     thumbAbortRef.current = ac;
+    let thumbPdf: PDFDocumentProxy | null = null;
 
     (async () => {
+      try {
+        // Separate document so main-view renders never cancel thumb tasks
+        thumbPdf = await openPdf(doc.url);
+      } catch {
+        // Fall back to the viewer proxy if a second open fails
+        thumbPdf = pdf;
+      }
+      if (ac.signal.aborted) {
+        if (thumbPdf && thumbPdf !== pdf) void thumbPdf.loadingTask.destroy();
+        return;
+      }
+
       const next: { page: number; src: string }[] = [];
       // Sidebar CSS width ~148px; render denser for sharpness (DPR applied inside)
       const targetWidth = 160;
       for (let p = 1; p <= pageCount; p++) {
-        if (ac.signal.aborted) return;
+        if (ac.signal.aborted) break;
         try {
-          const src = await renderThumbnail(
-            pdf,
+          const src = await renderThumbnailReliable(
+            thumbPdf,
             p,
             targetWidth,
             rotation,
@@ -155,8 +169,16 @@ export function Reader({ doc, onBack, onMeta }: Props) {
           // Publish after every page so first thumbs aren't stuck blank/skeleton
           setThumbs([...next]);
         } catch (e) {
-          if ((e as Error).name === "AbortError") return;
-          /* skip broken page; keep skeleton */
+          if ((e as Error).name === "AbortError" || ac.signal.aborted) break;
+          /* skip broken page after retries; keep skeleton */
+        }
+      }
+
+      if (thumbPdf && thumbPdf !== pdf) {
+        try {
+          await thumbPdf.loadingTask.destroy();
+        } catch {
+          /* ignore */
         }
       }
     })();
@@ -164,7 +186,7 @@ export function Reader({ doc, onBack, onMeta }: Props) {
     return () => {
       ac.abort();
     };
-  }, [pdf, pageCount, rotation]);
+  }, [pdf, pageCount, rotation, doc.url]);
 
   const applyFit = useCallback(
     async (mode: FitMode) => {

@@ -1,6 +1,21 @@
 import * as pdfjs from "pdfjs-dist";
 import type { PDFDocumentProxy, RenderTask } from "pdfjs-dist";
 import type { OutlineItem, Rotation, SearchHit } from "../types";
+import {
+  BlankThumbnailError,
+  THUMB_RETRY_DELAYS_MS,
+  attemptWithRetries,
+  isAbortError,
+  isMostlyBlankCanvas,
+} from "./thumb-utils";
+
+export {
+  BlankThumbnailError,
+  THUMB_RETRY_DELAYS_MS,
+  attemptWithRetries,
+  isMostlyBlankCanvas,
+  isMostlyBlankRgba,
+} from "./thumb-utils";
 
 pdfjs.GlobalWorkerOptions.workerSrc = new URL(
   "pdfjs-dist/build/pdf.worker.min.mjs",
@@ -129,9 +144,18 @@ export async function searchDocument(
   return hits;
 }
 
+function isRenderCancelled(e: unknown): boolean {
+  const name = (e as { name?: string })?.name;
+  return name === "RenderingCancelledException" || name === "AbortError";
+}
+
 /**
- * Render a sharp sidebar thumbnail.
+ * Render a sharp sidebar thumbnail once.
  * Renders at device-pixel density (capped), fills white, exports PNG.
+ * Rejects with BlankThumbnailError when the bitmap has no ink.
+ * Only throws AbortError when the caller's signal aborted — concurrent
+ * RenderingCancelledException from another canvas must be retried, not treated
+ * as a full thumbnail-pass abort.
  */
 export async function renderThumbnail(
   pdf: PDFDocumentProxy,
@@ -184,13 +208,14 @@ export async function renderThumbnail(
     });
     await task.promise;
   } catch (e) {
-    const name = (e as { name?: string })?.name;
-    if (
-      signal?.aborted ||
-      name === "RenderingCancelledException" ||
-      name === "AbortError"
-    ) {
+    if (signal?.aborted || isAbortError(e)) {
       throw new DOMException("Aborted", "AbortError");
+    }
+    // Concurrent page.render() (e.g. main viewer) cancelled us — caller should retry
+    if (isRenderCancelled(e)) {
+      const err = new Error("Thumbnail render cancelled");
+      err.name = "RenderingCancelledException";
+      throw err;
     }
     throw e;
   } finally {
@@ -199,8 +224,32 @@ export async function renderThumbnail(
 
   if (signal?.aborted) throw new DOMException("Aborted", "AbortError");
 
+  if (isMostlyBlankCanvas(canvas)) {
+    throw new BlankThumbnailError(pageNum);
+  }
+
   // Keep the high-DPI bitmap so CSS-scaled thumbs stay sharp on retina displays
   return canvas.toDataURL("image/png");
+}
+
+/**
+ * Reliable thumbnail: retries on blank bitmaps and concurrent render cancels.
+ */
+export async function renderThumbnailReliable(
+  pdf: PDFDocumentProxy,
+  pageNum: number,
+  targetWidth = 200,
+  rotation: Rotation = 0,
+  signal?: AbortSignal,
+): Promise<string> {
+  return attemptWithRetries(
+    () => renderThumbnail(pdf, pageNum, targetWidth, rotation, signal),
+    {
+      signal,
+      delaysMs: THUMB_RETRY_DELAYS_MS,
+      isSuccess: (src) => Boolean(src),
+    },
+  );
 }
 
 export { pdfjs };
