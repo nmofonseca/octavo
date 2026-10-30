@@ -11,6 +11,14 @@ A personal, multi-platform desktop PDF reader with annotations — highlights, f
 
 **Stack:** [Tauri 2](https://tauri.app) + React + Vite + [PDF.js](https://mozilla.github.io/pdf.js/)
 
+## Feature demo
+
+Web UI walkthrough (library → sample PDF → pages / outline → find → highlight / ink / sticky note → rotate / fit / zoom → view mode → back to library), recorded on a cloud agent VM with Playwright (~31s, 1440×900):
+
+[![Octavo feature demo](docs/media/octavo-features-demo-poster.jpg)](docs/media/octavo-features-demo.mp4)
+
+[Watch / download the MP4](docs/media/octavo-features-demo.mp4) · re-record: `npm run dev` then `node tools/record-features-demo.mjs`.
+
 ## ✨ Features (v1)
 
 - Open local PDFs (or the bundled sample) with a **recent library** and resume

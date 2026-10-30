@@ -2,6 +2,17 @@
 
 Helper scripts that are not part of the npm/Tauri build.
 
+## `record-features-demo.mjs`
+
+Records the README feature demo (`docs/media/octavo-features-demo.mp4`) against a running Vite server with Playwright video + ffmpeg.
+
+```bash
+npm run dev   # http://127.0.0.1:1420
+node tools/record-features-demo.mjs
+```
+
+Optional: `PORT=1420 OCTAVO_STORE_MEDIA=/path/to/copy.mp4`.
+
 ## `install-appimage.sh`
 
 Generic **Linux** helper: install, **upgrade to latest**, or **roll back to a specific version** of Octavo’s AppImage from [GitHub Releases](https://github.com/nmofonseca/octavo/releases). Uses XDG user directories (no root, no distro package manager). Registers a `.desktop` launcher under `$XDG_DATA_HOME/applications/` (default `~/.local/share/applications/`).
