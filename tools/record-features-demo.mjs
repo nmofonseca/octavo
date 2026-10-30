@@ -2,13 +2,15 @@
  * Record Octavo feature demo (web UI) via Playwright video → mp4.
  * Expects vite already serving on PORT (default 1420).
  *
- * Usage: node scripts/record-features-demo.mjs
+ * Usage: node tools/record-features-demo.mjs
  */
+/* eslint-disable no-undef -- Node/browser globals in Playwright helper */
 import { chromium } from "playwright";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import process from "node:process";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -33,7 +35,9 @@ async function waitForPagePaint(page) {
 }
 
 async function dragHighlight(page) {
-  const canvas = page.locator(".page-stack.active-page canvas.pdf-canvas, .page-stack canvas.pdf-canvas").first();
+  const canvas = page
+    .locator(".page-stack.active-page canvas.pdf-canvas, .page-stack canvas.pdf-canvas")
+    .first();
   const box = await canvas.boundingBox();
   if (!box) throw new Error("no canvas for highlight");
   const x1 = box.x + box.width * 0.18;
@@ -48,7 +52,9 @@ async function dragHighlight(page) {
 }
 
 async function drawInk(page) {
-  const canvas = page.locator(".page-stack.active-page canvas.pdf-canvas, .page-stack canvas.pdf-canvas").first();
+  const canvas = page
+    .locator(".page-stack.active-page canvas.pdf-canvas, .page-stack canvas.pdf-canvas")
+    .first();
   const box = await canvas.boundingBox();
   if (!box) throw new Error("no canvas for ink");
   const cx = box.x + box.width * 0.55;
@@ -69,7 +75,9 @@ async function drawInk(page) {
 }
 
 async function placeNote(page) {
-  const canvas = page.locator(".page-stack.active-page canvas.pdf-canvas, .page-stack canvas.pdf-canvas").first();
+  const canvas = page
+    .locator(".page-stack.active-page canvas.pdf-canvas, .page-stack canvas.pdf-canvas")
+    .first();
   const box = await canvas.boundingBox();
   if (!box) throw new Error("no canvas for note");
   await page.mouse.click(box.x + box.width * 0.7, box.y + box.height * 0.45);
@@ -83,17 +91,14 @@ async function placeNote(page) {
 }
 
 async function runDemo(page) {
-  // 1. Library
   await page.goto(BASE + "/", { waitUntil: "networkidle" });
   await page.waitForSelector(".brand", { timeout: 15000 });
   await sleep(1400);
 
-  // 2. Open sample
   await page.getByRole("button", { name: "Open sample PDF" }).click();
   await waitForPagePaint(page);
   await sleep(1200);
 
-  // 3. Thumbnails visible; flip pages
   await page.getByRole("button", { name: "Next page" }).click();
   await sleep(900);
   await page.getByRole("button", { name: "Next page" }).click();
@@ -103,7 +108,6 @@ async function runDemo(page) {
   await page.getByRole("button", { name: "Previous page" }).click();
   await sleep(800);
 
-  // 4. Outline
   await page.getByRole("button", { name: "Outline" }).click();
   await sleep(1200);
   const outlineItem = page.locator(".outline-item, .outline button, aside button").first();
@@ -114,7 +118,6 @@ async function runDemo(page) {
   await page.getByRole("button", { name: "Thumbnails" }).click();
   await sleep(800);
 
-  // 5. Find
   await page.getByRole("button", { name: "Find (Ctrl/Cmd+F)" }).click();
   await page.waitForSelector(".find-bar input", { timeout: 5000 });
   await page.locator(".find-bar input").fill("annotation");
@@ -127,25 +130,21 @@ async function runDemo(page) {
   await page.getByRole("button", { name: "Close find" }).click();
   await sleep(500);
 
-  // 6. Highlight
   await page.getByRole("button", { name: "Highlight" }).click();
   await sleep(300);
   await dragHighlight(page);
   await sleep(700);
 
-  // 7. Ink
   await page.getByRole("button", { name: "Ink" }).click();
   await sleep(300);
   await drawInk(page);
   await sleep(600);
 
-  // 8. Sticky note
   await page.getByRole("button", { name: "Sticky note" }).click();
   await sleep(300);
   await placeNote(page);
   await sleep(900);
 
-  // 9. Rotate + fit + zoom
   await page.getByRole("button", { name: "Rotate right" }).click();
   await sleep(900);
   await page.getByRole("button", { name: "Rotate left" }).click();
@@ -161,17 +160,61 @@ async function runDemo(page) {
   await page.getByRole("button", { name: "Zoom out" }).click();
   await sleep(500);
 
-  // 10. Continuous ↔ single
   const modeBtn = page.locator('button[data-tool="mode"]');
   await modeBtn.click();
   await sleep(1000);
   await modeBtn.click();
   await sleep(900);
 
-  // 11. Back to library
   await page.getByRole("button", { name: "← Library" }).click();
   await page.waitForSelector(".brand", { timeout: 10000 });
   await sleep(1500);
+}
+
+async function finalizeVideo(page, context, browser, tmpDir) {
+  const video = page.video();
+  await page.close();
+  await context.close();
+  await browser.close();
+
+  const webm = video ? await video.path() : null;
+  if (!webm || !fs.existsSync(webm)) {
+    throw new Error("Playwright did not produce a video file");
+  }
+  console.log("raw video:", webm, fs.statSync(webm).size, "bytes");
+
+  const ff = spawnSync(
+    "ffmpeg",
+    [
+      "-y",
+      "-i",
+      webm,
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      "-movflags",
+      "+faststart",
+      "-an",
+      OUT_MP4,
+    ],
+    { encoding: "utf8" },
+  );
+  if (ff.status !== 0) {
+    console.error(ff.stderr);
+    throw new Error(`ffmpeg failed with status ${ff.status}`);
+  }
+  console.log("wrote", OUT_MP4, fs.statSync(OUT_MP4).size, "bytes");
+
+  fs.mkdirSync(path.dirname(STORE_MEDIA), { recursive: true });
+  fs.copyFileSync(OUT_MP4, STORE_MEDIA);
+  console.log("copied", STORE_MEDIA, fs.statSync(STORE_MEDIA).size, "bytes");
+
+  try {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
 }
 
 async function main() {
@@ -186,54 +229,22 @@ async function main() {
   });
   const page = await context.newPage();
 
+  let demoError = null;
   try {
     console.log("Recording feature demo against", BASE);
     await runDemo(page);
-  } finally {
-    const video = page.video();
-    await page.close();
-    await context.close();
-    await browser.close();
-
-    const webm = video ? await video.path() : null;
-    if (!webm || !fs.existsSync(webm)) {
-      throw new Error("Playwright did not produce a video file");
-    }
-    console.log("raw video:", webm, fs.statSync(webm).size, "bytes");
-
-    const ff = spawnSync(
-      "ffmpeg",
-      [
-        "-y",
-        "-i",
-        webm,
-        "-c:v",
-        "libx264",
-        "-pix_fmt",
-        "yuv420p",
-        "-movflags",
-        "+faststart",
-        "-an",
-        OUT_MP4,
-      ],
-      { encoding: "utf8" },
-    );
-    if (ff.status !== 0) {
-      console.error(ff.stderr);
-      throw new Error(`ffmpeg failed with status ${ff.status}`);
-    }
-    console.log("wrote", OUT_MP4, fs.statSync(OUT_MP4).size, "bytes");
-
-    fs.mkdirSync(path.dirname(STORE_MEDIA), { recursive: true });
-    fs.copyFileSync(OUT_MP4, STORE_MEDIA);
-    console.log("copied", STORE_MEDIA, fs.statSync(STORE_MEDIA).size, "bytes");
-
-    try {
-      fs.rmSync(tmpDir, { recursive: true, force: true });
-    } catch {
-      /* ignore */
-    }
+  } catch (err) {
+    demoError = err;
   }
+
+  try {
+    await finalizeVideo(page, context, browser, tmpDir);
+  } catch (err) {
+    if (!demoError) demoError = err;
+    else console.error(err);
+  }
+
+  if (demoError) throw demoError;
 }
 
 main().catch((err) => {
