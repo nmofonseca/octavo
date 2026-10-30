@@ -66,16 +66,24 @@ chmod +x Octavo_*.AppImage
 ./Octavo_*.AppImage
 ```
 
-### Arch Linux / CachyOS
+### Linux AppImage (any distro)
 
-Use the **AppImage** (same file works across distros). There is no official Arch package yet; an AUR package may come later.
+Prefer the **AppImage** when you want a portable binary without a package manager. Download manually, or use the XDG installer (upgrade / roll back included):
+
+```bash
+./tools/install-appimage.sh              # latest → ~/.local/share/Octavo/ + launcher
+./tools/install-appimage.sh update       # upgrade existing install to latest
+./tools/install-appimage.sh --version 0.2.12   # install or roll back to a tag
+```
+
+See [`tools/README.md`](tools/README.md). Manual:
 
 ```bash
 chmod +x Octavo_*.AppImage
 ./Octavo_*.AppImage
 ```
 
-Optional: install [`appimaged`](https://github.com/AppImageCommunity/appimaged) or integrate via your desktop’s “Open with” so the AppImage appears in the app menu. FUSE/`fuse2` may be required depending on your AppImage runtime (`extra/fuse2` on Arch).
+A FUSE 2 runtime may be required depending on your distro’s AppImage support.
 
 ### Fedora / RHEL-like (bonus)
 
