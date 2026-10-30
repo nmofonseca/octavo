@@ -1,5 +1,21 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" fill="none">
   <rect width="64" height="64" rx="14" fill="#0A0A0B"/>
-  <path d="M18 16h18c7.2 0 12 4.4 12 11.2 0 5.2-2.6 9-7.2 10.6L48 48H37.2L31 37.2h-5.4V48H18V16zm7.6 14.6h5c3.4 0 5.4-1.7 5.4-4.4s-2-4.2-5.4-4.2h-5v8.6z" fill="#FF7A1A"/>
-  <path d="M40 16l8 8v2.5L42.5 21H40V16z" fill="#FFB070"/>
+  <!-- Octagon frame -->
+  <path
+    d="M24.5 10h15L46 18.5v27L39.5 54h-15L18 45.5v-27L24.5 10z"
+    stroke="#FF7A1A"
+    stroke-width="4.5"
+    stroke-linejoin="round"
+    fill="none"
+  />
+  <!-- Open book: left white page, right orange page -->
+  <path
+    d="M22.5 28.5c2.8-3.2 5.8-4.6 9.5-4.6v16.8c-3.4 0-6.2 1.1-9.5 4.2-.3.3-.7.1-.7-.3V29c0-.2.2-.4.7-.5z"
+    fill="#F5F5F5"
+  />
+  <path
+    d="M41.5 28.5c-2.8-3.2-5.8-4.6-9.5-4.6v16.8c3.4 0 6.2 1.1 9.5 4.2.3.3.7.1.7-.3V29c0-.2-.2-.4-.7-.5z"
+    fill="#FF7A1A"
+  />
+  <path d="M32 24v16.8" stroke="#0A0A0B" stroke-width="1.4" stroke-linecap="round"/>
 </svg>
