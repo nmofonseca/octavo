@@ -1,8 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   BlankThumbnailError,
+  PAGE_RETRY_DELAYS_MS,
   attemptWithRetries,
   isMostlyBlankRgba,
+  isRenderCancelledError,
 } from "./thumb-utils";
 
 function rgbaFill(
@@ -47,6 +49,25 @@ describe("isMostlyBlankRgba", () => {
   it("treats tiny canvases as blank", () => {
     const data = rgbaFill(1, 1, [0, 0, 0, 255]);
     expect(isMostlyBlankRgba(data, 1, 1)).toBe(true);
+  });
+});
+
+describe("isRenderCancelledError", () => {
+  it("detects pdf.js cancel + abort names", () => {
+    const cancel = new Error("cancelled");
+    cancel.name = "RenderingCancelledException";
+    expect(isRenderCancelledError(cancel)).toBe(true);
+    expect(isRenderCancelledError(new DOMException("Aborted", "AbortError"))).toBe(
+      true,
+    );
+    expect(isRenderCancelledError(new Error("nope"))).toBe(false);
+  });
+});
+
+describe("PAGE_RETRY_DELAYS_MS", () => {
+  it("offers several short PageView retry slots", () => {
+    expect(PAGE_RETRY_DELAYS_MS.length).toBeGreaterThanOrEqual(4);
+    expect(PAGE_RETRY_DELAYS_MS[0]).toBe(0);
   });
 });
 
