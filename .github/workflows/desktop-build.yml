@@ -131,6 +131,25 @@ jobs:
           path: release-assets
           merge-multiple: true
 
+      # Tauri names Linux ARM AppImage/rpm with aarch64; deb/Windows already use arm64.
+      # Rename published filenames so every ARM release asset uses arm64 consistently.
+      - name: Normalize ARM asset filenames to arm64
+        shell: bash
+        run: |
+          set -euo pipefail
+          renamed=0
+          while IFS= read -r -d '' f; do
+            dir=$(dirname "$f")
+            base=$(basename "$f")
+            new="${base//aarch64/arm64}"
+            if [ "$base" != "$new" ]; then
+              mv -- "$f" "$dir/$new"
+              echo "Renamed: $base -> $new"
+              renamed=$((renamed + 1))
+            fi
+          done < <(find release-assets -type f -name '*aarch64*' -print0)
+          echo "Normalized ${renamed} ARM asset filename(s) to arm64"
+
       - name: Soft-create tag and publish GitHub Release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
