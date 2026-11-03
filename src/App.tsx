@@ -1,10 +1,19 @@
 import { useCallback, useEffect, useState } from "react";
 import { Library } from "./components/Library";
 import { Reader } from "./components/Reader";
+import {
+  isTauriRuntime,
+  listenOpenPaths,
+  readPdfFromPath,
+  takePendingOpenPaths,
+} from "./lib/openPath";
 import { docIdFromMeta, loadLibrary, saveLibrary, touchOpened } from "./lib/storage";
 import { scheduleWindowIconApply } from "./lib/windowIcon";
 import type { LibraryDoc } from "./types";
 import "./styles.css";
+
+/** Survives React Strict Mode remounts within the same JS realm. */
+const openedOsPaths = new Set<string>();
 
 const SAMPLE: LibraryDoc = {
   id: "sample::octavo-welcome",
@@ -75,6 +84,48 @@ export default function App() {
     });
     setActive(doc);
   }, []);
+
+  // Module-stable dedupe across Strict Mode remounts (ref alone resets).
+  const openPaths = useCallback(
+    async (paths: string[]) => {
+      for (const path of paths) {
+        const key = path.trim();
+        if (!key || openedOsPaths.has(key)) continue;
+        openedOsPaths.add(key);
+        try {
+          const file = await readPdfFromPath(key);
+          openFile(file);
+        } catch {
+          openedOsPaths.delete(key);
+        }
+      }
+    },
+    [openFile],
+  );
+
+  // Desktop: cold-start argv / file:// from "Open with", plus second-instance forwards.
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    let cancelled = false;
+    let unlisten: (() => void) | undefined;
+
+    (async () => {
+      try {
+        unlisten = await listenOpenPaths((paths) => {
+          if (!cancelled) void openPaths(paths);
+        });
+        const pending = await takePendingOpenPaths();
+        if (!cancelled && pending.length > 0) await openPaths(pending);
+      } catch {
+        /* browser / missing commands */
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      unlisten?.();
+    };
+  }, [openPaths]);
 
   // Dev/QA: ?open=/samples/foo.pdf auto-opens (browser + packaged repros).
   useEffect(() => {

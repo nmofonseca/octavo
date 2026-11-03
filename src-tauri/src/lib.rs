@@ -1,8 +1,86 @@
+mod open_paths;
+
+use std::sync::Mutex;
+
+use open_paths::{pdf_paths_from_args, read_pdf_file};
+use serde::Serialize;
+use tauri::{AppHandle, Emitter, Manager, State};
+
+/// PDF paths that arrived before the webview subscribed to events.
+struct PendingOpenPaths(Mutex<Vec<String>>);
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct PdfFilePayload {
+    name: String,
+    /// Raw PDF bytes (IPC-encoded as a number array).
+    data: Vec<u8>,
+}
+
+#[tauri::command]
+fn take_pending_open_paths(state: State<'_, PendingOpenPaths>) -> Vec<String> {
+    std::mem::take(&mut *state.0.lock().expect("pending open paths lock"))
+}
+
+#[tauri::command]
+fn read_pdf_for_open(path: String) -> Result<PdfFilePayload, String> {
+    let (name, data) = read_pdf_file(&path)?;
+    Ok(PdfFilePayload { name, data })
+}
+
+fn emit_open_paths(app: &AppHandle, paths: Vec<String>) {
+    if paths.is_empty() {
+        return;
+    }
+    // Also queue pending so a second-instance open that races before the
+    // webview listens is still drained by take_pending_open_paths.
+    {
+        let state = app.state::<PendingOpenPaths>();
+        let mut pending = state.0.lock().expect("pending open paths lock");
+        pending.extend(paths.iter().cloned());
+    }
+    let _ = app.emit("octavo://open-paths", paths);
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.unminimize();
+        let _ = window.set_focus();
+    }
+}
+
+fn collect_launch_pdf_paths() -> Vec<String> {
+    let args: Vec<String> = std::env::args().collect();
+    let cwd = std::env::current_dir().ok();
+    pdf_paths_from_args(&args, cwd.as_deref())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+
+    #[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+    {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, argv, cwd| {
+            let paths = pdf_paths_from_args(&argv, Some(std::path::Path::new(&cwd)));
+            emit_open_paths(app, paths);
+        }));
+    }
+
+    builder
         .plugin(tauri_plugin_opener::init())
+        .manage(PendingOpenPaths(Mutex::new(Vec::new())))
+        .invoke_handler(tauri::generate_handler![
+            take_pending_open_paths,
+            read_pdf_for_open
+        ])
         .setup(|app| {
+            let launch_paths = collect_launch_pdf_paths();
+            if !launch_paths.is_empty() {
+                app.state::<PendingOpenPaths>()
+                    .0
+                    .lock()
+                    .expect("pending open paths lock")
+                    .extend(launch_paths);
+            }
+
             // Plasma/Wayland titlebar menu often ignores GTK set_icon_list and
             // instead resolves the .desktop Icon= / themed name. AppImages do
             // not install into the user icon theme, so we seed ~/.local/share
@@ -19,8 +97,32 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running Octavo");
+        .build(tauri::generate_context!())
+        .expect("error while building Octavo")
+        .run(|app, event| {
+            #[cfg(any(target_os = "macos", target_os = "ios"))]
+            if let tauri::RunEvent::Opened { urls } = &event {
+                let paths: Vec<String> = urls
+                    .iter()
+                    .filter_map(|url| {
+                        open_paths::normalize_open_arg(url.as_str(), None).or_else(|| {
+                            url.to_file_path()
+                                .ok()
+                                .map(|p| p.to_string_lossy().into_owned())
+                                .filter(|p| {
+                                    std::path::Path::new(p)
+                                        .extension()
+                                        .and_then(|e| e.to_str())
+                                        .map(|e| e.eq_ignore_ascii_case("pdf"))
+                                        .unwrap_or(false)
+                                })
+                        })
+                    })
+                    .collect();
+                emit_open_paths(app, paths);
+            }
+            let _ = (app, &event);
+        });
 }
 
 #[cfg(any(
@@ -176,8 +278,9 @@ fn install_user_hicolor_icons() -> Result<Option<std::path::PathBuf>, Box<dyn st
             f,
             "[Icon Theme]\nName=Hicolor\nComment=User hicolor\nDirectories=16x16/apps,24x24/apps,32x32/apps,48x48/apps,64x64/apps,128x128/apps,256x256/apps,512x512/apps\n"
         )?;
-        for size in ["16x16", "24x24", "32x32", "48x48", "64x64", "128x128", "256x256", "512x512"]
-        {
+        for size in [
+            "16x16", "24x24", "32x32", "48x48", "64x64", "128x128", "256x256", "512x512",
+        ] {
             writeln!(
                 f,
                 "[{size}/apps]\nSize={}\nContext=Applications\nType=Fixed\n",
@@ -219,6 +322,7 @@ fn install_user_desktop_entries(
         .unwrap_or_else(|| "octavo".into());
 
     // Absolute Icon= path bypasses stale theme caches that still hold a yellow W.
+    // %F forwards selected files from the file manager ("Open with Octavo").
     let body = format!(
         "[Desktop Entry]\n\
          Type=Application\n\
